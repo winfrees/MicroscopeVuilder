@@ -19,6 +19,7 @@ diffraction, and the conversion happens at the module boundary.
 
 from __future__ import annotations
 
+import cmath
 import math
 from dataclasses import dataclass
 
@@ -123,14 +124,64 @@ def make_pupil_grid(
     return PupilGrid(rho, theta, rho <= 1.0, n, r_px, na, wavelength_um)
 
 
-def pupil_function(grid: PupilGrid, wavefront: Wavefront | None = None) -> np.ndarray:
-    """Complex pupil ``P = A exp(i 2 pi W / lambda)``, zero outside the aperture."""
+def annulus_mask(grid: PupilGrid, inner: float, outer: float) -> np.ndarray:
+    """Boolean annulus in normalized pupil radius, for rings and annular sources."""
+    if not 0.0 <= inner < outer:
+        raise ValueError(f"need 0 <= inner < outer, got {inner} and {outer}")
+    return (grid.rho >= inner) & (grid.rho <= outer)
+
+
+def phase_ring(
+    grid: PupilGrid,
+    inner: float,
+    outer: float,
+    phase_shift_waves: float = 0.25,
+    transmission: float = 0.15,
+) -> np.ndarray:
+    """A phase-contrast ring: a complex mask applied at the objective back focal plane.
+
+    The ring does two things to the *undiffracted* light that passes through it,
+    and nothing to the diffracted light that misses it:
+
+    * shifts its phase by a quarter wave, so that surround and diffracted light --
+      which a phase object leaves in quadrature, hence invisible -- are brought into
+      a relationship that interferes constructively or destructively;
+    * attenuates it to 10-25%, because the undiffracted beam is overwhelmingly
+      brighter and would otherwise swamp the small diffracted signal.
+
+    Both are necessary. The phase shift alone converts phase to amplitude but leaves
+    the contrast negligible; the attenuation alone does nothing at all.
+
+    The ring must be conjugate to the condenser annulus, which is the alignment the
+    round is about: light that went through the annulus lands on the ring, and
+    anything the specimen diffracted goes elsewhere.
+    """
+    if not 0.0 <= transmission <= 1.0:
+        raise ValueError("transmission must be between 0 and 1")
+    ring = annulus_mask(grid, inner, outer)
+    mask = np.ones(grid.rho.shape, dtype=complex)
+    mask[ring] = math.sqrt(transmission) * cmath.exp(2j * math.pi * phase_shift_waves)
+    return mask
+
+
+def pupil_function(
+    grid: PupilGrid,
+    wavefront: Wavefront | None = None,
+    mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Complex pupil ``P = A exp(i 2 pi W / lambda)``, zero outside the aperture.
+
+    ``mask`` multiplies in an extra complex transmission -- a phase ring, a DIC
+    prism, an apodization -- so contrast techniques are expressed as pupil
+    engineering rather than as special cases in the imaging code.
+    """
     p = grid.mask.astype(complex)
     if wavefront is not None:
         w = wavefront.opd(np.clip(grid.rho, 0.0, 1.0), grid.theta)
         p *= np.exp(2j * math.pi * w / grid.wavelength_um)
-        p *= grid.mask
-    return p
+    if mask is not None:
+        p *= mask
+    return p * grid.mask
 
 
 def amplitude_psf(grid: PupilGrid, wavefront: Wavefront | None = None) -> np.ndarray:

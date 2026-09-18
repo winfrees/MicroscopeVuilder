@@ -238,3 +238,53 @@ def check_sensor_matches_the_optics(
             else "drop the extra magnification: it costs field and light for no detail"
         ),
     )
+
+
+def check_specimen_is_visible(
+    bench: Bench,
+    s_object: float,
+    detector_name: str,
+    specimen_factory,
+    minimum_contrast: float,
+    label: str = "Specimen visibility",
+    objective_name: str = "objective",
+    n: int = 256,
+) -> RuleResult:
+    """Can you actually see the thing?
+
+    The only honest win condition for a contrast technique. A phase object is
+    genuinely invisible in brightfield -- that is not a modelling artifact but the
+    reason the technique exists -- so the round is won when the measured contrast
+    crosses a threshold a person could work with.
+    """
+    from ..imaging.metrics import michelson_contrast
+    from ..imaging.synthesis import RenderSpec, render_build
+
+    rendered = render_build(
+        bench,
+        s_object,
+        RenderSpec(
+            specimen=specimen_factory, n=n, detector_name=detector_name,
+            objective_name=objective_name, coherence_parameter=0.7,
+        ),
+    )
+    measured = michelson_contrast(rendered.intensity)
+    status = Status.PASS if measured >= minimum_contrast else Status.FAIL
+    return RuleResult(
+        name=label,
+        status=status,
+        summary=(
+            f"{rendered.technique} gives {measured:.3f} contrast"
+            + ("" if status is Status.PASS else " -- not enough to see the specimen")
+        ),
+        equation=(
+            f"Michelson contrast = (max - min) / (max + min) = {measured:.3f}, "
+            f"want >= {minimum_contrast:.2f}"
+        ),
+        measured=measured,
+        target=minimum_contrast,
+        remedy=(
+            "a pure phase object changes no amplitude at all, so brightfield has "
+            "nothing to show; the technique has to convert phase into intensity"
+        ),
+    )

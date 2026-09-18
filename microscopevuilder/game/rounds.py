@@ -18,6 +18,7 @@ from ..rules.measured import (
     check_chromatic_focus,
     check_field_flatness,
     check_sensor_matches_the_optics,
+    check_specimen_is_visible,
 )
 from ..rules.tolerances import (
     MAGNIFICATION_TOLERANCE,
@@ -30,6 +31,8 @@ from ..rules.checks import (
     check_condenser_na_match,
     check_conjugate,
     check_conjugate_to_plane,
+    check_crossed_polars,
+    check_dic_prism,
     check_epi_separation,
     check_filter_is_focus_neutral,
     check_filter_set,
@@ -44,6 +47,8 @@ from ..rules.checks import (
     check_not_conjugate,
     check_optical_tube_length,
     check_relaxed_eye,
+    check_ring_at_back_focal_plane,
+    check_ring_matches_annulus,
     check_resolution,
     check_sampling,
     condenser_na,
@@ -1089,6 +1094,210 @@ ROUND_8 = Round(
 )
 
 
+# --- rounds 13-15: contrast techniques ---------------------------------------
+#
+# Gated on round 4, because all three are pupil engineering: a phase ring is
+# meaningless to someone who does not yet own the objective back focal plane as a
+# concept. They share the infinity stand, with the contrast components added.
+
+ANNULUS_INNER, ANNULUS_OUTER = 0.55, 0.75
+PHASE_SHIFT_WAVES = 0.25
+RING_TRANSMISSION = 0.15
+DIC_SHEAR_FRACTION = 0.6
+DIC_BIAS_WAVES = 0.15
+
+
+def _unstained_cell(n: int, sample_um: float):
+    """A pure phase object: an unstained cell. Invisible in brightfield, by physics."""
+    from ..imaging.specimens import phase_disc
+
+    return phase_disc(n, sample_um, radius_um=n * sample_um / 6, phase_rad=0.6)
+
+
+def _contrast_stand(*extra: BenchElement, na: float = 0.75) -> Bench:
+    base = _component_stand("cfi_plan_apo_20x", na=na, grade="plan_apochromat")
+    return Bench(
+        list(base.elements) + list(extra),
+        base.folds, tuple(base.origin), tuple(base.initial_direction),
+        list(base.arms.values()),
+    )
+
+
+def _bfp_s() -> float:
+    f_obj = CFI_TUBE_F / 20.0
+    return INF_SPECIMEN_S + f_obj + f_obj
+
+
+def _round13_reference() -> Bench:
+    return _contrast_stand(
+        BenchElement("annulus", 1.0, "annulus", 10.0, None, label="condenser annulus",
+                     metadata={"inner": ANNULUS_INNER, "outer": ANNULUS_OUTER}),
+        BenchElement("phase_ring", _bfp_s(), "phase_ring", 6.0, None, label="phase ring",
+                     metadata={"inner": ANNULUS_INNER, "outer": ANNULUS_OUTER,
+                               "phase_shift_waves": PHASE_SHIFT_WAVES,
+                               "transmission": RING_TRANSMISSION}),
+    )
+
+
+def _round13_evaluate(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    report.add(check_ring_at_back_focal_plane(bench, "phase_ring", "objective"))
+    report.add(check_ring_matches_annulus(bench, "phase_ring", "annulus"))
+    report.add(check_infinity_space(bench, INF_SPECIMEN_S, "objective"))
+    return report
+
+
+def _round13_measure(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    report.add(
+        check_specimen_is_visible(
+            bench, INF_SPECIMEN_S, "sensor", _unstained_cell, 0.25,
+            label="Unstained cell visible",
+        )
+    )
+    return report
+
+
+ROUND_13 = Round(
+    number=13,
+    title="Phase contrast",
+    brief=(
+        "Make an unstained cell visible. It absorbs nothing, so brightfield has "
+        "nothing to show: put an annulus in the condenser and a matching phase "
+        "ring in the objective's back focal plane."
+    ),
+    teaches="that phase contrast is pupil engineering at the back focal plane",
+    s_object=INF_SPECIMEN_S,
+    wavelength_um=0.5461,
+    evaluate=_round13_evaluate,
+    measure=_round13_measure,
+    reference_build=_round13_reference,
+    parts_budget=6,
+    available_kinds=("objective", "tube_lens", "detector", "annulus", "phase_ring"),
+    notes=(
+        "The ring does two jobs: a quarter-wave shift to bring surround and "
+        "diffracted light out of quadrature, and attenuation to about 15% so the "
+        "much brighter surround does not swamp the signal. Neither alone works."
+    ),
+)
+
+
+def _birefringent_specimen(n: int, sample_um: float):
+    """Crossed birefringent fibre bundles, left as birefringence.
+
+    Deliberately NOT converted to amplitude here: what the fibres transmit is
+    decided by the polarizer and analyzer on the bench, so rotating the analyzer
+    changes the image the way it would at a real microscope.
+    """
+    from ..imaging.specimens import birefringent_fibres
+
+    return birefringent_fibres(n, sample_um)
+
+
+def _round14_reference() -> Bench:
+    return _contrast_stand(
+        BenchElement("polarizer", 0.5, "polarizer", 10.0, None, label="polarizer",
+                     metadata={"angle_deg": 0.0}),
+        BenchElement("analyzer", _bfp_s() + 5.0, "polarizer", 8.0, None, label="analyzer",
+                     metadata={"angle_deg": 90.0}),
+    )
+
+
+def _round14_evaluate(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    report.add(check_crossed_polars(bench, "polarizer", "analyzer"))
+    report.add(check_infinity_space(bench, INF_SPECIMEN_S, "objective"))
+    return report
+
+
+def _round14_measure(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    report.add(
+        check_specimen_is_visible(
+            bench, INF_SPECIMEN_S, "sensor", _birefringent_specimen, 0.5,
+            label="Birefringent structure visible",
+        )
+    )
+    return report
+
+
+ROUND_14 = Round(
+    number=14,
+    title="Polarization",
+    brief=(
+        "Cross the polars and find the birefringent fibres. They are invisible "
+        "otherwise, and they go dark whenever their axis lines up with either polar."
+    ),
+    teaches="birefringence, extinction, and reading structure off a dark background",
+    s_object=INF_SPECIMEN_S,
+    wavelength_um=0.5461,
+    evaluate=_round14_evaluate,
+    measure=_round14_measure,
+    reference_build=_round14_reference,
+    parts_budget=6,
+    available_kinds=("objective", "tube_lens", "detector", "polarizer"),
+    notes=(
+        "Malus's law sets the price of a misaligned analyzer: the background rises "
+        "as sin squared of the error from crossed, and a few degrees is enough to "
+        "bury a weakly birefringent specimen."
+    ),
+)
+
+
+def _round15_reference() -> Bench:
+    return _contrast_stand(
+        BenchElement("polarizer", 0.5, "polarizer", 10.0, None, label="polarizer",
+                     metadata={"angle_deg": 0.0}),
+        BenchElement("wollaston", _bfp_s(), "wollaston", 6.0, None, label="Wollaston prism",
+                     metadata={"shear_fraction": DIC_SHEAR_FRACTION,
+                               "bias_waves": DIC_BIAS_WAVES, "axis": 1}),
+        BenchElement("analyzer", _bfp_s() + 5.0, "polarizer", 8.0, None, label="analyzer",
+                     metadata={"angle_deg": 90.0}),
+    )
+
+
+def _round15_evaluate(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    na = float(bench.get("objective").metadata.get("na", 0.75))
+    report.add(check_crossed_polars(bench, "polarizer", "analyzer"))
+    report.add(check_dic_prism(bench, "wollaston", na, 0.5461))
+    report.add(check_infinity_space(bench, INF_SPECIMEN_S, "objective"))
+    return report
+
+
+def _round15_measure(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    report.add(
+        check_specimen_is_visible(
+            bench, INF_SPECIMEN_S, "sensor", _unstained_cell, 0.25,
+            label="Relief image of the phase object",
+        )
+    )
+    return report
+
+
+ROUND_15 = Round(
+    number=15,
+    title="Differential interference contrast",
+    brief=(
+        "Shear the beam. Two sheared copies of the specimen, recombined with a "
+        "bias, render the gradient of optical path as raked relief."
+    ),
+    teaches="shear, bias retardation, and why DIC shows gradients rather than phase",
+    s_object=INF_SPECIMEN_S,
+    wavelength_um=0.5461,
+    evaluate=_round15_evaluate,
+    measure=_round15_measure,
+    reference_build=_round15_reference,
+    parts_budget=7,
+    available_kinds=("objective", "tube_lens", "detector", "polarizer", "wollaston"),
+    notes=(
+        "The relief runs along the shear axis and nowhere else, so a structure "
+        "parallel to the shear disappears. Rotate the specimen, not the prism."
+    ),
+)
+
+
 # --- sandbox -----------------------------------------------------------------
 
 
@@ -1168,6 +1377,7 @@ ROUNDS: dict[int, Round] = {
     r.number: r
     for r in (
         ROUND_1, ROUND_2, ROUND_3, ROUND_4, ROUND_5, ROUND_6, ROUND_7, ROUND_8,
-        ROUND_9, ROUND_10, ROUND_11, ROUND_12, SANDBOX,
+        ROUND_9, ROUND_10, ROUND_11, ROUND_12,
+        ROUND_13, ROUND_14, ROUND_15, SANDBOX,
     )
 }

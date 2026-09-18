@@ -7,7 +7,29 @@ and a size in samples.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
+
+
+@dataclass(frozen=True)
+class BirefringentField:
+    """A specimen described by its birefringence, not by its transmittance.
+
+    A birefringent object has no amplitude structure of its own -- it is invisible
+    without polars, which is the whole point of round 14. What it has is a
+    retardance and an axis azimuth per pixel, and how much light gets through is
+    decided by the polarizer and analyzer *on the bench*. So the specimen carries
+    these maps and the renderer applies the Jones calculation with whatever angles
+    the player has set, rather than the specimen baking in an answer.
+    """
+
+    retardance_waves: np.ndarray
+    azimuth_rad: np.ndarray
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        return self.retardance_waves.shape
 
 
 def _coords(n: int, sample_um: float) -> tuple[np.ndarray, np.ndarray]:
@@ -94,3 +116,33 @@ def commensurate_period(n: int, sample_um: float, target_period_um: float) -> fl
     length_um = n * sample_um
     cycles = max(1, round(length_um / target_period_um))
     return length_um / cycles
+
+
+def birefringent_fibres(
+    n: int,
+    sample_um: float,
+    thickness_um: float = 3.0,
+    birefringence: float = 0.02,
+    wavelength_um: float = 0.5461,
+) -> BirefringentField:
+    """Two crossed bundles of birefringent fibres, at different axis angles.
+
+    Collagen, starch, muscle and cellulose all behave this way: an ordered
+    molecular axis delays one polarization against the other. The two bundles sit
+    at different azimuths so that rotating the stage extinguishes them at
+    different angles -- the observation that identifies birefringence as such.
+    """
+    from ..optics.jones import birefringence_retardance
+
+    axis = (np.arange(n) - n // 2) * sample_um
+    y, x = np.meshgrid(axis, axis, indexing="ij")
+    retardance = np.zeros((n, n))
+    azimuth = np.zeros((n, n))
+
+    delay = birefringence_retardance(thickness_um, birefringence, wavelength_um)
+    width = n * sample_um / 12
+    for offset, angle in ((-n * sample_um / 7, 0.0), (n * sample_um / 7, np.pi / 4)):
+        band = np.abs(y * np.cos(angle) - x * np.sin(angle) - offset) < width / 2
+        retardance[band] = delay
+        azimuth[band] = angle + np.pi / 4
+    return BirefringentField(retardance, azimuth)

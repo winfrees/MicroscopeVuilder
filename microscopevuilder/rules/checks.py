@@ -860,3 +860,158 @@ def check_parfocality(bench: Bench, objective_names: list[str], parfocal_mm: flo
             "front focal plane at the same height; mixing series breaks that"
         ),
     )
+
+
+def check_ring_matches_annulus(bench: Bench, ring_name: str, annulus_name: str) -> RuleResult:
+    """Is the phase ring the same size as the condenser annulus?
+
+    They are conjugate planes, so the undiffracted light from the annulus lands as
+    a ring in the objective back focal plane, and the phase ring must cover exactly
+    that. Too small and some surround light escapes unshifted, diluting contrast;
+    too large and it starts catching diffracted light, which is the signal.
+    """
+    ring = bench.get(ring_name)
+    annulus = bench.get(annulus_name)
+    ring_in = float(ring.metadata.get("inner", 0.0))
+    ring_out = float(ring.metadata.get("outer", 0.0))
+    ann_in = float(annulus.metadata.get("inner", 0.0))
+    ann_out = float(annulus.metadata.get("outer", 0.0))
+
+    mismatch = max(abs(ring_in - ann_in), abs(ring_out - ann_out))
+    status = (
+        Status.PASS if mismatch <= 0.03
+        else Status.WARN if mismatch <= 0.08
+        else Status.FAIL
+    )
+    return RuleResult(
+        name="Ring and annulus match",
+        status=status,
+        summary=(
+            f"ring {ring_in:.2f}-{ring_out:.2f} against annulus {ann_in:.2f}-{ann_out:.2f}"
+            + ("" if status is Status.PASS else f" -- out by {mismatch:.2f} of the pupil radius")
+        ),
+        equation=(
+            f"|ring - annulus| = {mismatch:.3f} in normalized pupil radius; "
+            "they are conjugate planes and must coincide"
+        ),
+        measured=mismatch,
+        target=0.0,
+        culprit=ring_name,
+        remedy=(
+            "match the ring to the annulus: too small lets surround light past "
+            "unshifted, too large starts phase-shifting the diffracted signal"
+        ),
+    )
+
+
+def check_ring_at_back_focal_plane(
+    bench: Bench, ring_name: str, objective_name: str, tolerance_mm: float = 1.0
+) -> RuleResult:
+    """Is the phase ring actually in the objective's back focal plane?
+
+    Nowhere else will do. The back focal plane is where illumination angle maps to
+    position, so it is the only plane at which undiffracted light occupies a
+    compact ring separable from the diffracted light spread across the pupil.
+    """
+    objective = bench.get(objective_name)
+    ring = bench.get(ring_name)
+    bfp_s = objective.s + (objective.focal_length_mm or 0.0)
+    return tolerance_result(
+        name="Ring at the back focal plane",
+        measured=ring.s,
+        target=bfp_s,
+        tolerance=tolerance_mm,
+        units="mm",
+        equation=(
+            f"{ring_name} at s = {ring.s:.2f} mm; back focal plane at "
+            f"{objective.s:.2f} + {objective.focal_length_mm or 0.0:.2f} = {bfp_s:.2f} mm"
+        ),
+        culprit=ring_name,
+        remedy=f"move the phase ring to s = {bfp_s:.2f} mm",
+        relative=False,
+    )
+
+
+def check_crossed_polars(bench: Bench, polarizer_name: str, analyzer_name: str) -> RuleResult:
+    """Are the polarizer and analyzer crossed?
+
+    Everything in polarization microscopy is read against a dark background, so the
+    two have to be at ninety degrees. A few degrees off and the background lifts
+    enough to bury a weakly birefringent specimen.
+    """
+    import math as _math
+
+    polarizer = float(bench.get(polarizer_name).metadata.get("angle_deg", 0.0))
+    analyzer = float(bench.get(analyzer_name).metadata.get("angle_deg", 90.0))
+    separation = abs((analyzer - polarizer) % 180.0)
+    error = abs(separation - 90.0)
+
+    # Malus's law: the background rises as sin^2 of the error from crossed.
+    leak = _math.sin(_math.radians(error)) ** 2
+    status = Status.PASS if error <= 1.0 else Status.WARN if error <= 5.0 else Status.FAIL
+    return RuleResult(
+        name="Crossed polars",
+        status=status,
+        summary=(
+            f"polarizer and analyzer are {separation:.1f} degrees apart"
+            + ("" if status is Status.PASS else f" -- {leak * 100:.1f}% of the light leaks through")
+        ),
+        equation=(
+            f"|analyzer - polarizer| = {separation:.1f} deg; Malus gives a background "
+            f"of sin^2({error:.1f} deg) = {leak:.4f}"
+        ),
+        measured=separation,
+        target=90.0,
+        units="deg",
+        culprit=analyzer_name,
+        remedy="rotate the analyzer to ninety degrees from the polarizer",
+    )
+
+
+def check_dic_prism(
+    bench: Bench, prism_name: str, na: float, wavelength_um: float
+) -> RuleResult:
+    """Is the Wollaston shear right for this objective, and is there any bias?
+
+    Two settings, two ways to get it wrong. A shear much larger than the resolution
+    limit produces a visible double image rather than a relief; much smaller and
+    there is no difference to detect. Zero bias gives a symmetric, dark-field-like
+    image in which a gradient and its opposite look identical, so the relief has no
+    direction.
+    """
+    prism = bench.get(prism_name)
+    fraction = float(prism.metadata.get("shear_fraction", 0.0))
+    bias = float(prism.metadata.get("bias_waves", 0.0))
+
+    problems = []
+    if not 0.2 <= fraction <= 1.0:
+        problems.append(
+            f"shear is {fraction:.2f} of the resolution limit"
+            + (" -- too large, you will see a double image" if fraction > 1.0
+               else " -- too small to generate a difference")
+        )
+    if not 0.05 <= bias <= 0.35:
+        problems.append(
+            f"bias is {bias:.2f} waves"
+            + (" -- at zero bias the relief has no direction" if bias < 0.05
+               else " -- past a quarter wave the background washes out")
+        )
+
+    status = Status.PASS if not problems else Status.FAIL
+    return RuleResult(
+        name="DIC prism",
+        status=status,
+        summary="shear and bias are both in range" if not problems else "; ".join(problems),
+        equation=(
+            f"shear = {fraction:.2f} x (0.61 lambda / NA) = "
+            f"{fraction * 0.61 * wavelength_um / max(na, 1e-3):.3f} um; "
+            f"bias = {bias:.2f} waves"
+        ),
+        measured=fraction,
+        target=0.6,
+        culprit=prism_name,
+        remedy=(
+            "shear a little under the resolution limit, and bias around an eighth "
+            "of a wave to put the working point on the steep part of the sine"
+        ),
+    )

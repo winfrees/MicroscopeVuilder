@@ -22,6 +22,7 @@ from ..bench.bench import Bench
 from ..optics.coherence import image_partially_coherent
 from ..optics.psf import make_pupil_grid
 from .build_optics import BuildOptics, resolve_build_optics
+from .techniques import apply_polarization, resolve_technique
 
 SpecimenFactory = Callable[[int, float], np.ndarray]
 
@@ -47,6 +48,7 @@ class RenderedImage:
     sample_um: float
     optics: BuildOptics
     notes: list[str] = field(default_factory=list)
+    technique: str = "brightfield"
 
     @property
     def extent_um(self) -> float:
@@ -67,11 +69,31 @@ def render_build(bench: Bench, s_object: float, spec: RenderSpec) -> RenderedIma
 
     grid = make_pupil_grid(max(optics.na, 0.02), spec.wavelength_um, n=spec.n)
     specimen = spec.specimen(spec.n, grid.image_sample_um)
+
+    # A birefringent specimen is not an amplitude object: what it transmits depends
+    # on the polarizer and analyzer the player has actually fitted.
+    specimen, polarization, polarization_notes = apply_polarization(specimen, bench)
+
+    # Contrast techniques are pupil and source engineering, not a rendering mode.
+    technique = resolve_technique(bench, grid, optics.coherence_parameter, optics.na)
+    if technique.field_transform is not None:
+        specimen = technique.field_transform(specimen, grid.image_sample_um)
+
     intensity = image_partially_coherent(
-        specimen, grid, optics.coherence_parameter, optics.wavefront
+        specimen,
+        grid,
+        optics.coherence_parameter,
+        optics.wavefront,
+        source=technique.source,
+        pupil_mask=technique.pupil_mask,
     )
 
-    notes = list(optics.notes)
+    notes = list(optics.notes) + list(technique.notes) + list(polarization_notes)
+    technique_name = technique.name
+    if polarization == "polarized" and technique_name == "brightfield":
+        technique_name = "polarized light"
+    elif polarization == "unpolarized":
+        technique_name = "brightfield (no polars fitted)"
     if spec.exposure_photons > 0:
         intensity, note = _apply_photometry(
             intensity, optics.relative_irradiance, spec.exposure_photons, spec.seed
@@ -79,7 +101,7 @@ def render_build(bench: Bench, s_object: float, spec: RenderSpec) -> RenderedIma
         if note:
             notes.append(note)
 
-    return RenderedImage(intensity, grid.image_sample_um, optics, notes)
+    return RenderedImage(intensity, grid.image_sample_um, optics, notes, technique_name)
 
 
 def _apply_photometry(

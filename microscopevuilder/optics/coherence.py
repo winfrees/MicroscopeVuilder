@@ -99,12 +99,47 @@ def make_source(
     return Source(shifts, weights)
 
 
+def make_annular_source(
+    grid: PupilGrid,
+    inner: float,
+    outer: float,
+    step_px: int | None = None,
+) -> Source:
+    """An annular condenser aperture, as phase contrast requires.
+
+    The annulus is what makes the technique work: illumination arrives only at a
+    narrow range of angles, so the undiffracted light lands in a matching narrow
+    ring at the objective back focal plane, where a phase ring can act on it alone.
+    A full disc would spread undiffracted light across the whole pupil and there
+    would be nothing to single out.
+    """
+    outer_radius = outer * grid.pupil_radius_px
+    inner_radius = inner * grid.pupil_radius_px
+    if outer_radius + grid.pupil_radius_px > grid.n // 2:
+        raise ValueError(
+            f"an annulus out to S={outer} would alias on a {grid.n} grid; "
+            "use a larger n or a smaller pupil_radius_px"
+        )
+
+    step = step_px if step_px is not None else max(1, int(round(outer_radius / 12)))
+    reach = int(np.ceil(outer_radius / step))
+    offsets = np.arange(-reach, reach + 1) * step
+    rr, cc = np.meshgrid(offsets, offsets, indexing="ij")
+    radius = np.hypot(rr, cc)
+    inside = (radius >= inner_radius) & (radius <= outer_radius)
+    shifts = np.stack([rr[inside], cc[inside]], axis=1).astype(int)
+    if len(shifts) == 0:
+        raise ValueError("the annulus is too thin to sample; widen it or reduce step_px")
+    return Source(shifts, np.ones(len(shifts)) / len(shifts))
+
+
 def image_partially_coherent(
     specimen: np.ndarray,
     grid: PupilGrid,
     coherence_parameter: float,
     wavefront: Wavefront | None = None,
     source: Source | None = None,
+    pupil_mask: np.ndarray | None = None,
 ) -> np.ndarray:
     """Form the image of a complex specimen under partially coherent illumination.
 
@@ -116,7 +151,7 @@ def image_partially_coherent(
         raise ValueError(f"specimen must be {grid.n}x{grid.n}, got {specimen.shape}")
 
     src = source if source is not None else make_source(grid, coherence_parameter)
-    pupil = pupil_function(grid, wavefront)
+    pupil = pupil_function(grid, wavefront, pupil_mask)
     spectrum = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(specimen)))
 
     image = np.zeros((grid.n, grid.n), dtype=float)

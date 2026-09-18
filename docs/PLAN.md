@@ -265,7 +265,7 @@ Where practical, compare a few benches against a published prescription.
 | M6 | Derived tolerances | **Done**: every focus tolerance traces to the Rayleigh quarter-wave criterion and is validated against the PSF engine; pupil conjugates use a separate geometric criterion |
 | M7 | Epi + fluorescence on **branched** benches | **Done**: rounds 9–10; the bench gained arms, since an epi path is a second path, not a folded one |
 | M8 | Infinity correction, parfocal turret, sandbox | **Done**: rounds 11–12; a glass-plate element makes the infinity-space argument demonstrable, and the bench gained enabled/disabled elements so a turret traces one objective |
-| M8b | Complex-amplitude contrast: phase, polarization, DIC | **Open**: rounds 13–15. Engine groundwork is done — complex amplitude works and a 0.2 rad phase object is verifiably invisible in brightfield. Needs `optics/jones.py`, phase ring/annulus at the objective BFP, Wollaston shear |
+| M8b | Complex-amplitude contrast: phase, polarization, DIC | **Done**: rounds 13–15. Contrast techniques are expressed as pupil and source engineering (`optics/jones.py`, annular sources, phase-ring pupil masks, Wollaston shear), so a misaligned ring fails for the reason it would on a bench |
 | M9 | Packaging: one-file executables, published to Releases | **Done**: PyInstaller one-file per platform, built and smoke-tested in CI, attached to a GitHub Release on `v*` tags. Unsigned — noted in the release body |
 | M10 | Close the testing loop on the real bench | **Done**: `imaging/build_optics.py` resolves a bench into its optical state, `imaging/synthesis.py` renders through it, `imaging/metrics.py` measures the result. An achromat and an apochromat now render differently, and the catalog's chromatic term is anchored to the textbook `f/2000` |
 | M11 | Rounds 6–8: colour, flat field, camera port | **Done**: graded by a second *measured* pass that renders, alongside the live geometry pass. Non-plan objectives added to the catalog so round 7 has something to contrast against |
@@ -334,6 +334,26 @@ Two measurement lessons:
 - **Round 7 needed non-plan objectives**, which the catalog did not have; every
   entry was a plan design. Three `achromat`-grade entries were added with Petzval
   sags of 20–30 µm, 7–31× the depth of focus against the plan designs' 0–3×.
+
+### M8b — contrast techniques (done)
+
+All three are pupil and polarization engineering rather than rendering modes, so
+they are driven by components the player places. `imaging/techniques.py` translates
+whatever is on the bench into a source, a pupil mask and a field transform.
+
+- **Phase contrast** is an annular source plus a complex pupil mask over the
+  matching ring. Both of the ring's jobs are necessary and tested as such: the
+  quarter-wave shift alone, and the attenuation alone, each produce less than half
+  the contrast of the two together. A ring with no annulus does nothing and says so.
+- **Polarization** carries a Jones state. A birefringent specimen is stored as
+  retardance and azimuth maps, *not* as transmittance, so what it transmits is
+  decided by the polarizer and analyzer actually fitted — rotate the analyzer and
+  the background lifts, exactly as Malus predicts. With no polars fitted it is
+  completely invisible, which is the reason the round needs them.
+- **DIC** shears the field by a fraction of the resolution limit and recombines
+  with a bias. Zero bias gives no relief (a gradient and its opposite look
+  identical) and the relief follows the shear axis exactly, which is why you rotate
+  the specimen and not the prism.
 
 ### M12 — game shell (planned in §3, never built)
 
