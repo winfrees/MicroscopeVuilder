@@ -34,7 +34,15 @@ class RuleResult:
 
     @property
     def ok(self) -> bool:
-        return self.status in (Status.PASS, Status.NOT_APPLICABLE)
+        """A warning is advisory, not blocking.
+
+        Only a FAIL stops a round. A WARN says "this works but a demonstrator
+        would raise an eyebrow" -- a condenser slightly closed, a tolerance in the
+        second band -- and rounds use it deliberately: round 3 passes *with* a
+        warning that the filament is visible, which is exactly the observation
+        round 4 then asks the player to fix.
+        """
+        return self.status is not Status.FAIL
 
     def format(self) -> str:
         mark = {

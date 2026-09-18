@@ -86,6 +86,14 @@ class CardPanel(QtWidgets.QWidget):
             self.detail.setText("")
         else:
             card = cards[-1]
+            if card.s < s_object:
+                self.reading.setText(
+                    f"the card at s = {card.s:.1f} mm is upstream of the specimen "
+                    f"(s = {s_object:.1f} mm) -- move it downstream to read it"
+                )
+                self.detail.setText("")
+                self._list_planes(bench, s_object)
+                return
             r = read_card(bench, s_object, card.s)
             self.reading.setText(r.describe())
             self.detail.setText(
@@ -95,8 +103,11 @@ class CardPanel(QtWidgets.QWidget):
                 "the chief ray crossing marks a pupil plane"
             )
 
+        self._list_planes(bench, s_object)
+
+    def _list_planes(self, bench: Bench, s_object: float) -> None:
         self.planes.clear()
-        found = find_planes(bench, s_object, min(s_object, 0.0), bench.extent() * 1.1 + 10.0)
+        found = find_planes(bench, s_object, s_object, bench.extent() * 1.1 + 10.0)
         for kind, label in (("image", "image (field)"), ("pupil", "pupil (aperture)")):
             for s in found[kind]:
                 self.planes.addTopLevelItem(QtWidgets.QTreeWidgetItem([label, f"{s:.2f}"]))
@@ -263,6 +274,14 @@ class Workspace(QtWidgets.QMainWindow):
         self.ribbon_toggle.toggled.connect(self._toggle_ribbon)
         bar.addAction(self.ribbon_toggle)
 
+        self.imaging_toggle = QtGui.QAction("Imaging path", self, checkable=True, checked=True)
+        self.imaging_toggle.toggled.connect(self._toggle_imaging)
+        bar.addAction(self.imaging_toggle)
+
+        self.illumination_toggle = QtGui.QAction("Illumination path", self, checkable=True, checked=True)
+        self.illumination_toggle.toggled.connect(self._toggle_illumination)
+        bar.addAction(self.illumination_toggle)
+
         bar.addSeparator()
         bar.addWidget(QtWidgets.QLabel(" condenser NA/obj NA (S): "))
         self.coherence = QtWidgets.QDoubleSpinBox()
@@ -305,6 +324,14 @@ class Workspace(QtWidgets.QMainWindow):
 
     def _toggle_ribbon(self, on: bool) -> None:
         self.scene.show_ribbon = on
+        self.scene.refresh()
+
+    def _toggle_imaging(self, on: bool) -> None:
+        self.scene.show_imaging = on
+        self.scene.refresh()
+
+    def _toggle_illumination(self, on: bool) -> None:
+        self.scene.show_illumination = on
         self.scene.refresh()
 
     def _on_element_selected(self, name: str) -> None:

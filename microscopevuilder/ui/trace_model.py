@@ -33,6 +33,37 @@ class ConjugatePlane:
     kind: str  # "field" or "aperture"
 
 
+def _illumination_rays(bench: Bench, system, s_object: float) -> list[TracedRay]:
+    """Rays from the lamp, if this bench has one."""
+    lamps = [e for e in bench.elements if e.kind == "lamp"]
+    if not lamps:
+        return []
+    lamp = lamps[0]
+
+    downstream = sorted({lamp.s, *(e.s for e in bench.elements if e.s >= lamp.s)})
+    tail = (max(downstream) - min(downstream)) * 0.08 or 10.0
+    downstream.append(max(downstream) + tail)
+
+    out: list[TracedRay] = []
+    axial = system.marginal_ray(lamp.s)
+    if axial is not None:
+        out.append(
+            TracedRay(
+                "illumination_axial",
+                [(s, system.trace(axial, lamp.s, s).y) for s in downstream],
+            )
+        )
+    edge = system.chief_ray(lamp.s, lamp.semi_diameter_mm)
+    if edge is not None:
+        out.append(
+            TracedRay(
+                "illumination_edge",
+                [(s, system.trace(edge, lamp.s, s).y) for s in downstream],
+            )
+        )
+    return out
+
+
 @dataclass
 class TraceModel:
     bench: Bench
@@ -56,7 +87,10 @@ def build_trace_model(
     stop = system.aperture_stop(s_object)
     marginal = system.marginal_ray(s_object)
 
-    stops = sorted({s_object, *(e.s for e in bench.elements)})
+    # Only sample forward of the object: the bench is traced in one direction, and
+    # on an illumination stand there are elements (lamp, collector, diaphragms)
+    # upstream of the specimen that the imaging trace must not look back at.
+    stops = sorted({s for s in (s_object, *(e.s for e in bench.elements)) if s >= s_object})
     tail = (max(stops) - min(stops)) * 0.08 or 10.0
     stops.append(max(stops) + tail)
 
@@ -73,6 +107,11 @@ def build_trace_model(
         rays.append(
             TracedRay("chief", [(s, system.trace(chief, s_object, s).y) for s in stops])
         )
+
+    # The illumination path is its own trace, from the lamp forward. Drawing both
+    # is what makes an illumination round legible: the two bundles cross at every
+    # conjugate plane, and where one focuses the other is spread wide.
+    rays.extend(_illumination_rays(bench, system, s_object))
 
     image_s = system.image_plane(s_object)
     magnification = (

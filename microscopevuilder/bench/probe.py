@@ -87,6 +87,13 @@ def read_card(
     ``image_tolerance_mm`` is the blur below which the eye calls it sharp; 10 um is
     a fair stand-in for what a person can see on a piece of card.
     """
+    if s_card < s_object:
+        raise ValueError(
+            f"a card at s = {s_card:.2f} mm is upstream of the object plane at "
+            f"s = {s_object:.2f} mm; the bench is traced in one direction, so hold "
+            "the card downstream of what you are imaging"
+        )
+
     system = _trace_without_cards(bench)
     marginal = system.marginal_ray(s_object)
     chief = system.chief_ray(s_object, field_height_mm)
@@ -133,6 +140,7 @@ def scan_axis(
     """Sweep a card along the axis. Feeds the 'where are the planes?' overlay."""
     if samples < 2:
         raise ValueError("need at least two samples")
+    s_start = max(s_start, s_object)
     step = (s_end - s_start) / (samples - 1)
     return [
         read_card(bench, s_object, s_start + i * step, field_height_mm)
@@ -157,6 +165,8 @@ def find_planes(
     marginal = system.marginal_ray(s_object)
     chief = system.chief_ray(s_object, field_height_mm)
 
+    # Planes upstream of the object are not reachable by a forward trace.
+    s_start = max(s_start, s_object)
     step = (s_end - s_start) / (samples - 1)
     positions = [s_start + i * step for i in range(samples)]
 

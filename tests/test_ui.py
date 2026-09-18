@@ -267,3 +267,48 @@ def test_a_card_is_drawn_in_the_scene(app):
     painter = QtGui.QPainter(image)
     scene.render(painter)
     painter.end()
+
+
+# --- illumination stands -----------------------------------------------------
+
+
+def test_illumination_rounds_open_without_tracing_backwards(app):
+    # The lamp, collector and diaphragms all sit upstream of the specimen, which
+    # is the object plane for the imaging trace. Sampling the whole bench from the
+    # specimen tried to trace backwards and threw.
+    for number in (3, 4, 5):
+        w = Workspace(number)
+        assert w.report_panel.list.topLevelItemCount() > 0
+
+
+def test_the_illumination_path_is_traced_as_its_own_ray_set(app):
+    w = Workspace(4)
+    labels = {r.label for r in w.scene.model.rays}
+    assert "illumination_axial" in labels
+    assert "marginal" in labels
+
+
+def test_illumination_and_imaging_paths_toggle_independently(app):
+    w = Workspace(4)
+    both = len(w.scene.items())
+    w._toggle_illumination(False)
+    imaging_only = len(w.scene.items())
+    w._toggle_imaging(False)
+    neither = len(w.scene.items())
+    assert neither < imaging_only < both
+
+
+def test_a_card_upstream_of_the_specimen_explains_itself(app):
+    # Rather than raising out of the panel, say what is wrong.
+    w = Workspace(4)
+    w.add_card(50.0)
+    assert "upstream of the specimen" in w.card_panel.reading.text()
+
+
+def test_reading_a_card_upstream_of_the_object_raises_clearly():
+    from microscopevuilder.bench.probe import read_card as read
+
+    rnd = get_round(4)
+    bench = rnd.reference_build()
+    with pytest.raises(ValueError, match="upstream of the object plane"):
+        read(bench, rnd.s_object, 50.0)

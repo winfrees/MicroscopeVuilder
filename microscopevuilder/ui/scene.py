@@ -26,6 +26,7 @@ COLOR_LENS = QtGui.QColor("#7fc7d9")
 COLOR_STOP = QtGui.QColor("#c05a5a")
 COLOR_DETECTOR = QtGui.QColor("#9b8ac4")
 COLOR_CARD = QtGui.QColor("#eceff4")
+COLOR_ILLUMINATION = QtGui.QColor("#d9c45a")
 COLOR_FIELD_SET = QtGui.QColor("#3a8fe8")
 COLOR_APERTURE_SET = QtGui.QColor("#e8833a")
 
@@ -124,6 +125,8 @@ class BenchScene(QtWidgets.QGraphicsScene):
         self._overlay: list[QtWidgets.QGraphicsItem] = []
         self.show_rays = True
         self.show_ribbon = True
+        self.show_imaging = True
+        self.show_illumination = True
         self.setBackgroundBrush(QtGui.QColor("#12151a"))
         self.selectionChanged.connect(self._on_selection)
 
@@ -219,11 +222,25 @@ class BenchScene(QtWidgets.QGraphicsScene):
         return pts
 
     def _draw_rays(self) -> None:
-        colors = {"marginal": COLOR_MARGINAL, "chief": COLOR_CHIEF}
+        colors = {
+            "marginal": COLOR_MARGINAL,
+            "chief": COLOR_CHIEF,
+            "illumination_axial": COLOR_ILLUMINATION,
+            "illumination_edge": COLOR_ILLUMINATION,
+        }
         for ray in self.model.rays:
+            illumination = ray.label.startswith("illumination")
+            if illumination and not self.show_illumination:
+                continue
+            if not illumination and not self.show_imaging:
+                continue
             color = colors.get(ray.label, COLOR_AXIS)
             pts = self._ray_points(ray.samples)
-            self._polyline(pts, color, 1.0)
+            self._polyline(pts, color, 0.7 if illumination else 1.0)
+            if illumination:
+                self._polyline(
+                    self._ray_points([(s, -y) for s, y in ray.samples]), color, 0.7
+                )
             # The marginal ray is symmetric about the axis; draw its mirror so the
             # cone reads as a cone.
             if ray.label == "marginal":

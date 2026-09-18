@@ -14,12 +14,19 @@ from typing import Callable
 from ..bench.bench import Bench, BenchElement
 from ..rules.base import RuleReport
 from ..rules.checks import (
+    check_condenser_na_match,
+    check_conjugate,
+    check_conjugate_to_plane,
+    check_illumination_throughput,
+    check_illumination_uniformity,
     check_image_lands_on_detector,
     check_magnification,
     check_no_unintended_clipping,
-    check_resolution,
+    check_not_conjugate,
     check_optical_tube_length,
     check_relaxed_eye,
+    check_resolution,
+    condenser_na,
 )
 
 VISUAL_REFERENCE_DISTANCE_MM = 250.0  # the conventional near point for visual M
@@ -199,7 +206,235 @@ ROUND_2 = Round(
 )
 
 
-ROUNDS: dict[int, Round] = {r.number: r for r in (ROUND_1, ROUND_2)}
+# --- rounds 3-5: illumination ------------------------------------------------
+#
+# All three share one stand, so the player carries a build forward rather than
+# starting over. The geometry is derived rather than chosen: the collector images
+# the lamp onto the aperture diaphragm, the diaphragm sits at the condenser's front
+# focal plane, and the condenser images the field diaphragm onto the specimen.
+
+LAMP_S = 0.0
+COLLECTOR_F = 18.0
+# A collector of focal length f can only span a lamp-to-image distance of 4f or
+# more. At f = 30 mm that is 120 mm, so such a collector CANNOT reach the 75 mm
+# needed for critical illumination -- the quadratic has no real root. f = 18 mm
+# reaches both targets, which makes collector position the single knob that
+# switches critical illumination into Koehler.
+COLLECTOR_S = 30.0          # critical: lamp imaged to 75 mm (the condenser's object)
+COLLECTOR_KOHLER_S = 22.0526  # Koehler: lamp imaged to 120 mm (aperture diaphragm)
+FIELD_DIAPHRAGM_S = 75.0
+APERTURE_DIAPHRAGM_S = 120.0  # = lamp imaged by the collector
+CONDENSER_F = 15.0
+CONDENSER_S = APERTURE_DIAPHRAGM_S + CONDENSER_F  # diaphragm at the front focal plane
+SPECIMEN_S = 155.0  # = field diaphragm imaged by the condenser
+
+
+def _illumination_stand(
+    objective_f: float = 16.0,
+    objective_na: float = 0.25,
+    aperture_semi_mm: float = 3.0,
+    collector_s: float = COLLECTOR_S,
+) -> Bench:
+    """The shared dia-illumination stand for rounds 3-5."""
+    objective_s = SPECIMEN_S + 1.0 / (1.0 / objective_f - 1.0 / (objective_f + OPTICAL_TUBE_LENGTH_MM))
+    image_s = objective_s + objective_f + OPTICAL_TUBE_LENGTH_MM
+    return Bench(
+        [
+            BenchElement("lamp", LAMP_S, "lamp", 2.0, None, label="tungsten filament"),
+            BenchElement("collector", collector_s, "lens", 15.0, COLLECTOR_F, label="collector"),
+            BenchElement("field_diaphragm", FIELD_DIAPHRAGM_S, "diaphragm", 8.0, None,
+                         label="field diaphragm"),
+            BenchElement("aperture_diaphragm", APERTURE_DIAPHRAGM_S, "diaphragm",
+                         aperture_semi_mm, None, label="aperture diaphragm"),
+            BenchElement("condenser", CONDENSER_S, "condenser", 10.0, CONDENSER_F,
+                         label="condenser"),
+            BenchElement("specimen", SPECIMEN_S, "field_stop", 12.0, None, label="specimen"),
+            BenchElement("objective", objective_s, "objective", 4.0, objective_f,
+                         label=f"objective NA {objective_na}", metadata={"na": objective_na}),
+            BenchElement("intermediate_image", image_s, "field_stop", 11.0,
+                         label="intermediate image"),
+        ]
+    )
+
+
+def _round3_evaluate(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    report.add(
+        check_conjugate(bench, bench.get("lamp").s, "specimen", "Lamp on specimen",
+                        tolerance_mm=1.0, from_label="the filament")
+    )
+    report.add(check_illumination_throughput(bench, "lamp", "collector", required_na=0.4))
+    report.add(check_no_unintended_clipping(bench, SPECIMEN_S, field_height_mm=0.3))
+    # Deliberately advisory: this WARN is the observation round 4 exists to fix.
+    report.add(
+        check_illumination_uniformity(bench, "lamp", "specimen", "condenser", advisory=True)
+    )
+    return report
+
+
+def collector_position_for(lamp_image_s: float, f: float = COLLECTOR_F) -> float:
+    """Where to put the collector so the lamp images at ``lamp_image_s``.
+
+    With the lamp at the origin, ``1/c + 1/(D - c) = 1/f`` gives
+    ``c^2 - D c + f D = 0``. The two roots are the near and far conjugate pair;
+    the near one is taken. A negative discriminant means the collector is too
+    long-focus to span ``D`` at all -- no position works, which is a real
+    constraint and not a solver failure.
+    """
+    discriminant = lamp_image_s**2 - 4.0 * f * lamp_image_s
+    if discriminant < 0:
+        raise ValueError(
+            f"a collector of f = {f:.1f} mm cannot image across {lamp_image_s:.1f} mm; "
+            f"it needs at least 4f = {4 * f:.1f} mm"
+        )
+    return (lamp_image_s - discriminant**0.5) / 2.0
+
+
+def _round3_reference() -> Bench:
+    # Critical illumination: the collector images the lamp to 75 mm, which the
+    # condenser then relays onto the specimen -- so the filament lands in the field.
+    return _illumination_stand(collector_s=collector_position_for(75.0))
+
+
+ROUND_3 = Round(
+    number=3,
+    title="Make it bright",
+    brief=(
+        "Light the specimen. Focus the collector so the lamp filament is imaged "
+        "onto the specimen, and get it close enough to gather the light you need. "
+        "This is critical illumination, and it works."
+    ),
+    teaches=(
+        "that illumination is its own imaging problem, with its own conjugates -- "
+        "and that collected NA, not focus alone, decides how bright the field is"
+    ),
+    s_object=SPECIMEN_S,
+    wavelength_um=0.5461,
+    evaluate=_round3_evaluate,
+    reference_build=_round3_reference,
+    parts_budget=8,
+    available_kinds=("lamp", "lens", "diaphragm", "condenser", "objective", "field_stop"),
+    notes=(
+        "Two collector positions focus the lamp onto the specimen -- the near and "
+        "far conjugates -- but only the near one gathers enough light, because "
+        "irradiance goes as the square of the collected NA. Critical illumination "
+        "is bright and simple, and you can see the filament across the field. "
+        "Round 4 is about getting rid of it without losing the light."
+    ),
+)
+
+
+def _round4_evaluate(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    objective = bench.get("objective")
+    bfp_s = objective.s + (objective.focal_length_mm or 0.0)
+
+    # The four-plane conjugacy, stated as four questions.
+    report.add(
+        check_conjugate(bench, bench.get("lamp").s, "aperture_diaphragm",
+                        "Lamp on aperture diaphragm", 1.0, "the filament")
+    )
+    report.add(
+        check_conjugate(bench, bench.get("field_diaphragm").s, "specimen",
+                        "Field diaphragm on specimen", 1.0, "the field diaphragm")
+    )
+    report.add(
+        check_conjugate_to_plane(
+            bench, bench.get("aperture_diaphragm").s, bfp_s,
+            "Aperture diaphragm on back focal plane",
+            f"the objective back focal plane (s = {bfp_s:.2f} mm)",
+            tolerance_mm=1.0, from_label="the aperture diaphragm",
+        )
+    )
+    # ...and the half that is easy to forget.
+    report.add(
+        check_not_conjugate(bench, bench.get("lamp").s, "specimen",
+                            "Filament off the specimen", 5.0, "the filament")
+    )
+    report.add(check_illumination_uniformity(bench, "lamp", "specimen", "condenser"))
+    report.add(check_no_unintended_clipping(bench, SPECIMEN_S, field_height_mm=0.3))
+    return report
+
+
+def _round4_reference() -> Bench:
+    # Koehler: the same collector, moved so the lamp images onto the aperture
+    # diaphragm instead. That single move is the whole round.
+    return _illumination_stand(collector_s=COLLECTOR_KOHLER_S)
+
+
+ROUND_4 = Round(
+    number=4,
+    title="Köhler illumination",
+    brief=(
+        "Re-aim the illumination so the filament lands on the aperture diaphragm "
+        "instead of the specimen, and the field diaphragm lands on the specimen. "
+        "Even field, no filament, both diaphragms doing a job."
+    ),
+    teaches="the four-plane conjugacy that defines Köhler illumination",
+    s_object=SPECIMEN_S,
+    wavelength_um=0.5461,
+    evaluate=_round4_evaluate,
+    reference_build=_round4_reference,
+    parts_budget=8,
+    available_kinds=("lamp", "lens", "diaphragm", "condenser", "objective", "field_stop"),
+    notes=(
+        "Two interleaved sets: the FIELD set (field diaphragm, specimen, "
+        "intermediate image) and the APERTURE set (lamp, aperture diaphragm, "
+        "objective back focal plane). Put a white card at each to see the difference."
+    ),
+)
+
+
+def _round5_evaluate(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    na_obj = float(bench.get("objective").metadata.get("na", 0.0))
+    na_cond = condenser_na(bench, "aperture_diaphragm", "condenser")
+
+    report.add(check_resolution(na_obj, na_cond, 0.5461, required_um=0.50))
+    report.add(check_condenser_na_match(na_obj, na_cond))
+    report.add(
+        check_conjugate(bench, bench.get("field_diaphragm").s, "specimen",
+                        "Field diaphragm on specimen", 1.0, "the field diaphragm")
+    )
+    report.add(check_illumination_uniformity(bench, "lamp", "specimen", "condenser"))
+    return report
+
+
+def _round5_reference() -> Bench:
+    # A 0.65 NA objective with the condenser opened to NA 0.55 (r = 0.55 * 15 mm).
+    return _illumination_stand(
+        objective_f=160.0 / 40.0,
+        objective_na=0.65,
+        aperture_semi_mm=0.55 * CONDENSER_F,
+        collector_s=COLLECTOR_KOHLER_S,
+    )
+
+
+ROUND_5 = Round(
+    number=5,
+    title="Resolution",
+    brief=(
+        "Resolve 0.50 um. You have a 0.65 NA objective; the condenser aperture "
+        "diaphragm is the other half of the equation."
+    ),
+    teaches="Abbe's d = lambda / (NA_obj + NA_cond), and why closing the condenser costs you",
+    s_object=SPECIMEN_S,
+    wavelength_um=0.5461,
+    evaluate=_round5_evaluate,
+    reference_build=_round5_reference,
+    parts_budget=8,
+    available_kinds=("lamp", "lens", "diaphragm", "condenser", "objective", "field_stop"),
+    notes=(
+        "Closing the aperture diaphragm makes the image look crisper and is the "
+        "commonest way to throw resolution away. The condenser contributes to d "
+        "exactly as much as the objective does."
+    ),
+)
+
+
+ROUNDS: dict[int, Round] = {
+    r.number: r for r in (ROUND_1, ROUND_2, ROUND_3, ROUND_4, ROUND_5)
+}
 
 
 def get_round(number: int) -> Round:

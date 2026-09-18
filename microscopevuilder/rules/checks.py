@@ -326,3 +326,301 @@ def check_relaxed_eye(bench: Bench, image_name: str, eyepiece_name: str) -> Rule
             "the eye must accommodate, which is invisible at first and tiring by lunchtime"
         ),
     )
+
+
+def _conjugate_within_horizon(system, s_from: float, s_to: float, horizon: float) -> float | None:
+    """The conjugate of ``s_from`` before ``s_to``, or None if effectively at infinity.
+
+    A bundle that is *almost* collimated solves to a conjugate hundreds of metres
+    away. That is arithmetically true and physically meaningless on a bench, and
+    printing it ("images 176486 mm away") reads as a bug. Anything past the horizon
+    is reported as collimated, which is what it is.
+    """
+    s_img = system.image_plane(s_from, search_to=s_to + 1e-6)
+    if s_img is None or abs(s_img) > horizon:
+        return None
+    return s_img
+
+
+def check_conjugate(
+    bench: Bench,
+    s_from: float,
+    to_name: str,
+    label: str,
+    tolerance_mm: float = 1.0,
+    from_label: str = "source",
+) -> RuleResult:
+    """Does the plane at ``s_from`` image onto ``to_name``?
+
+    The workhorse of Koehler alignment. Everything about the four-plane conjugacy
+    reduces to asking this question four times, so the rule reports the miss
+    distance in millimetres rather than a bare verdict -- a player 3 mm out needs
+    to know which way and how far.
+    """
+    target = bench.get(to_name)
+    system = bench.to_paraxial()
+    s_img = system.image_plane(s_from, search_to=target.s + 1e-6)
+
+    if s_img is None:
+        return RuleResult(
+            name=label,
+            status=Status.FAIL,
+            summary=f"{from_label} is not imaged anywhere: the bundle leaves collimated",
+            equation=f"no finite conjugate of s = {s_from:.2f} mm before {to_name}",
+            culprit=to_name,
+            remedy="add or move a lens so this plane is actually imaged",
+        )
+
+    return tolerance_result(
+        name=label,
+        measured=s_img,
+        target=target.s,
+        tolerance=tolerance_mm,
+        units="mm",
+        equation=(
+            f"the conjugate of {from_label} (s = {s_from:.2f} mm) lands at "
+            f"s = {s_img:.2f} mm; {to_name} is at s = {target.s:.2f} mm"
+        ),
+        culprit=to_name,
+        remedy=f"move {to_name} to s = {s_img:.2f} mm, or refocus the lens before it",
+        relative=False,
+    )
+
+
+def check_conjugate_to_plane(
+    bench: Bench,
+    s_from: float,
+    s_target: float,
+    label: str,
+    target_label: str,
+    tolerance_mm: float = 1.0,
+    from_label: str = "source",
+) -> RuleResult:
+    """Conjugacy against a bare plane rather than a named element.
+
+    The objective's back focal plane is not a component you can place -- it is a
+    position derived from the objective -- so the Koehler aperture-set check needs
+    to compare against a coordinate. Passing a loose tolerance against the
+    objective's own position instead would let a build off by a full focal length
+    pass, which is the whole quantity in question.
+    """
+    system = bench.to_paraxial()
+    s_img = system.image_plane(s_from, search_to=s_target + 1e-6)
+
+    if s_img is None:
+        return RuleResult(
+            name=label,
+            status=Status.FAIL,
+            summary=f"{from_label} is not imaged onto {target_label}: the bundle leaves collimated",
+            equation=f"no finite conjugate of s = {s_from:.2f} mm before {target_label}",
+            remedy="refocus the lens ahead of this plane",
+        )
+
+    return tolerance_result(
+        name=label,
+        measured=s_img,
+        target=s_target,
+        tolerance=tolerance_mm,
+        units="mm",
+        equation=(
+            f"the conjugate of {from_label} (s = {s_from:.2f} mm) lands at "
+            f"s = {s_img:.2f} mm; {target_label} is at s = {s_target:.2f} mm"
+        ),
+        remedy=f"adjust so the conjugate falls on {target_label} at s = {s_target:.2f} mm",
+        relative=False,
+    )
+
+
+def check_not_conjugate(
+    bench: Bench,
+    s_from: float,
+    to_name: str,
+    label: str,
+    minimum_mm: float = 5.0,
+    from_label: str = "source",
+) -> RuleResult:
+    """Does the plane at ``s_from`` stay *off* ``to_name``?
+
+    The half of Koehler that is easy to forget: the lamp filament must NOT be
+    imaged onto the specimen. Critical illumination puts it there and you see the
+    filament across your field; Koehler deliberately pushes it to the aperture
+    plane instead.
+    """
+    target = bench.get(to_name)
+    system = bench.to_paraxial()
+    horizon = max(bench.extent() * 10.0, 1000.0)
+    s_img = _conjugate_within_horizon(system, s_from, target.s, horizon)
+
+    if s_img is None:
+        return RuleResult(
+            name=label,
+            status=Status.PASS,
+            summary=(
+                f"{from_label} is collimated at {to_name}: every point of it fills the "
+                "whole field, which is exactly what Köhler is for"
+            ),
+            equation=(
+                f"the conjugate of s = {s_from:.2f} mm lies beyond the bench "
+                f"(> {horizon:.0f} mm), i.e. the bundle is collimated"
+            ),
+        )
+
+    miss = abs(s_img - target.s)
+    status = Status.PASS if miss >= minimum_mm else Status.FAIL
+    return RuleResult(
+        name=label,
+        status=status,
+        summary=(
+            f"{from_label} images {miss:.1f} mm away from {to_name}"
+            if status is Status.PASS
+            else f"{from_label} is imaged onto {to_name} (only {miss:.2f} mm off) -- "
+            "its structure will be visible in the field"
+        ),
+        equation=(
+            f"conjugate of {from_label} at s = {s_img:.2f} mm vs {to_name} at "
+            f"s = {target.s:.2f} mm; need at least {minimum_mm:.0f} mm of separation"
+        ),
+        measured=miss,
+        target=minimum_mm,
+        units="mm",
+        culprit="collector",
+        remedy=(
+            "refocus the collector so the lamp images onto the aperture diaphragm "
+            "instead of onto the specimen -- that is the difference between critical "
+            "and Koehler illumination"
+        ),
+    )
+
+
+def check_illumination_uniformity(
+    bench: Bench,
+    lamp_name: str,
+    specimen_name: str,
+    condenser_name: str,
+    advisory: bool = False,
+) -> RuleResult:
+    """Is the field evenly lit?
+
+    In Koehler each lamp point fills the whole field, so filament structure averages
+    away. The measurable proxy is how far the lamp's image is from the specimen,
+    scaled by the condenser focal length: at the specimen you see the filament, one
+    focal length away you see nothing of it.
+    """
+    lamp = bench.get(lamp_name)
+    specimen = bench.get(specimen_name)
+    condenser = bench.get(condenser_name)
+    system = bench.to_paraxial()
+    horizon = max(bench.extent() * 10.0, 1000.0)
+    s_img = _conjugate_within_horizon(system, lamp.s, specimen.s, horizon)
+
+    if s_img is None:
+        return RuleResult(
+            name="Field uniformity",
+            status=Status.PASS,
+            summary="even field: the lamp is collimated at the specimen, so no filament structure",
+            equation=(
+                f"the lamp's conjugate lies beyond the bench (> {horizon:.0f} mm): "
+                "each filament point illuminates the entire field"
+            ),
+        )
+
+    f_cond = condenser.focal_length_mm or 1.0
+    defocus_in_focal_lengths = abs(s_img - specimen.s) / f_cond
+    status = (
+        Status.PASS if defocus_in_focal_lengths >= 0.5
+        else Status.WARN if defocus_in_focal_lengths >= 0.2
+        else Status.FAIL
+    )
+    if advisory and status is Status.FAIL:
+        status = Status.WARN
+    return RuleResult(
+        name="Field uniformity",
+        status=status,
+        summary=(
+            "even field: no filament structure visible"
+            if status is Status.PASS
+            else (
+                "the filament is imaged onto the specimen and will be visible across "
+                "the field -- expected for critical illumination"
+                if advisory
+                else f"the filament is {'faintly ' if status is Status.WARN else ''}"
+                "visible across the field"
+            )
+        ),
+        equation=(
+            f"|lamp image - specimen| / f_condenser = "
+            f"|{s_img:.2f} - {specimen.s:.2f}| / {f_cond:.2f} = "
+            f"{defocus_in_focal_lengths:.2f} focal lengths"
+        ),
+        measured=defocus_in_focal_lengths,
+        target=0.5,
+        culprit="collector",
+        remedy="move the collector so the lamp images onto the aperture diaphragm",
+    )
+
+
+def condenser_na(bench: Bench, diaphragm_name: str, condenser_name: str, n: float = 1.0) -> float:
+    """Illumination NA set by the aperture diaphragm radius and condenser focal length.
+
+    Paraxially ``NA = n * r / f``. The diaphragm sits at the condenser's front focal
+    plane in a Koehler build, so its radius maps directly onto illumination angle --
+    which is why that one knob controls resolution and contrast together.
+    """
+    diaphragm = bench.get(diaphragm_name)
+    condenser = bench.get(condenser_name)
+    f = condenser.focal_length_mm or 1.0
+    return n * diaphragm.semi_diameter_mm / f
+
+
+def check_illumination_throughput(
+    bench: Bench, lamp_name: str, collector_name: str, required_na: float = 0.4
+) -> RuleResult:
+    """How much of the lamp's output the collector actually gathers.
+
+    A lamp radiates into a hemisphere; the collector catches the cone it subtends,
+    ``NA = r / d``, and irradiance at the specimen scales as ``NA^2``. Moving the
+    collector 50% further away costs more than half the light.
+
+    This is the constraint that makes round 3 a real puzzle. The lamp-to-specimen
+    conjugate on its own is nearly insensitive -- the condenser demagnifies the lamp
+    image so strongly that any collector from 28 to 55 mm lands it within a
+    millimetre of the specimen -- so focus alone cannot decide the round. Throughput
+    can: of the two collector positions that focus correctly, only the near one
+    gathers enough light.
+    """
+    lamp = bench.get(lamp_name)
+    collector = bench.get(collector_name)
+    distance = collector.s - lamp.s
+    if distance <= 0:
+        return RuleResult(
+            name="Throughput",
+            status=Status.FAIL,
+            summary="the collector is not downstream of the lamp",
+            equation=f"collector at s = {collector.s:.2f} mm, lamp at s = {lamp.s:.2f} mm",
+            culprit=collector_name,
+            remedy="put the collector after the lamp",
+        )
+
+    collected_na = collector.semi_diameter_mm / distance
+    relative = (collected_na / required_na) ** 2
+    status = Status.PASS if collected_na >= required_na else Status.FAIL
+    return RuleResult(
+        name="Throughput",
+        status=status,
+        summary=(
+            f"the collector gathers NA {collected_na:.3f}"
+            + ("" if status is Status.PASS else f" -- only {relative * 100:.0f}% of the light needed")
+        ),
+        equation=(
+            f"NA_collected = r / d = {collector.semi_diameter_mm:.1f} / {distance:.1f} = "
+            f"{collected_na:.3f}; irradiance scales as NA^2, so this is "
+            f"{relative:.2f}x the requirement"
+        ),
+        measured=collected_na,
+        target=required_na,
+        culprit=collector_name,
+        remedy=(
+            "move the collector closer to the lamp: it subtends a larger cone there, "
+            "and irradiance goes as the square of the collected NA"
+        ),
+    )

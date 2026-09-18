@@ -173,7 +173,7 @@ about four of them at once.
 |---|---|---|---|
 | 1 | Single lens loupe | Conjugates, `1/f = 1/s + 1/s'`, real vs virtual | Focused 5× image of a ruling |
 | 2 | Compound scope | Objective + eyepiece, 160 mm tube, intermediate image | 100× at the eyepoint, in focus |
-| 3 | Make it bright | Critical illumination, lamp collector | Adequate irradiance, filament visible (the setup for round 4) |
+| 3 | Make it bright | Critical illumination, collected NA, lamp collector | Lamp imaged on the specimen AND enough light gathered. Two collector positions focus correctly (the near and far conjugates); only the near one is bright enough, since irradiance goes as NA². Passes *with* a warning that the filament is visible |
 | 4 | Köhler | Field + aperture diaphragms, four-plane conjugacy | Even field, filament gone, field stop imaged sharply |
 | 5 | Resolution | NA, Abbe limit, condenser matching | Resolve group 7 of the USAF target |
 | 6 | Color | Achromat vs apochromat, lateral color, filters | Chromatic error under tolerance |
@@ -255,7 +255,7 @@ Where practical, compare a few benches against a published prescription.
 | M2b | Partial coherence (Abbe source integration) | **Done**: S->0 matches the coherent formula to 1e-12; the `(1+S) NA/lambda` cutoff holds at S = 0, 0.5, 1; a 0.2 rad phase object is invisible in brightfield |
 | M3 | Bench model, rule engine, rounds 1–2, headless runner | **Done**: `python -m microscopevuilder --round N`; reference builds pass and wrong builds fail for the stated reason |
 | M4 | Qt workspace: drag, ray overlay, inspector, conjugate ribbon, Run loop | **Done**: `python -m microscopevuilder --ui --round N`; headless Qt tests cover drag, retrace, scorecard and worker thread |
-| M5 | Testing loop, scorecard, conjugate ribbon | Rounds 1–5 |
+| M5 | Illumination rounds, conjugacy rules, illumination ray path | **Done**: rounds 3–5 with the four-plane Köhler check, throughput, condenser NA matching |
 | M6 | Illumination depth: Köhler, NA matching | Rounds 3–5 tuned, tolerances validated |
 | M7 | Epi + fluorescence, folded benches | Rounds 9–10 |
 | M8 | Infinity correction, full stand, sandbox | Rounds 11–12 |
