@@ -346,6 +346,7 @@ class Workspace(QtWidgets.QMainWindow):
         self.setCentralWidget(splitter)
 
         self._build_toolbar()
+        self._warn_about_unverified_catalog()
         self.scene.set_bench(self.bench, self.round.s_object)
         self.scene.benchChanged.connect(self.refresh_live)
         self.scene.elementSelected.connect(self._on_element_selected)
@@ -379,6 +380,11 @@ class Workspace(QtWidgets.QMainWindow):
         reset = QtGui.QAction("Reference build", self)
         reset.triggered.connect(self.load_reference)
         bar.addAction(reset)
+
+        help_action = QtGui.QAction("How this works", self)
+        help_action.setShortcut("F1")
+        help_action.triggered.connect(self.show_help)
+        bar.addAction(help_action)
 
         bar.addSeparator()
         self.rays_toggle = QtGui.QAction("Rays", self, checkable=True, checked=True)
@@ -423,7 +429,7 @@ class Workspace(QtWidgets.QMainWindow):
         self.wavelength.setValue(546.1)
         bar.addWidget(self.wavelength)
 
-        self.statusBar().showMessage("drag a component along the axis to rebuild")
+        self.statusBar().showMessage("drag a component along the axis to rebuild -- F1 for help")
 
     # --- live loop -----------------------------------------------------------
 
@@ -533,6 +539,52 @@ class Workspace(QtWidgets.QMainWindow):
         self.worker = ImageWorker(self.bench, self.round.s_object, spec, self.round, self)
         self.worker.finished_image.connect(self._on_image)
         self.worker.start()
+
+    def _warn_about_unverified_catalog(self) -> None:
+        """Say plainly that the catalog numbers have not been datasheet-checked.
+
+        The audience will compare these against their own bench, so the disclaimer
+        belongs where they will see it rather than buried in a file header.
+        """
+        from ..bench.catalog import load_catalog
+
+        pending = load_catalog().unverified_entries()
+        if not pending:
+            return
+        banner = QtWidgets.QLabel(
+            f"Catalog specifications are unverified ({len(pending)} entries): recorded "
+            "from secondary knowledge, not checked against a datasheet. Aberration "
+            "budgets are pedagogical by design. Run --verify-catalog for the checklist."
+        )
+        banner.setWordWrap(True)
+        banner.setStyleSheet(
+            "background: #3a2f18; color: #d9c45a; padding: 4px; border-radius: 3px;"
+        )
+        self.statusBar().addPermanentWidget(banner, 1)
+
+    def show_help(self) -> None:
+        """A first look at the workspace, for a player who has just opened it."""
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("How the workspace works")
+        box.setTextFormat(QtCore.Qt.RichText)
+        box.setText(
+            "<b>Drag a component along the axis</b> to rebuild. The scorecard and the "
+            "rays follow every move."
+        )
+        box.setInformativeText(
+            "<p><b>Orange rays</b> leave the axial object point and fill the aperture "
+            "stop. <b>Blue rays</b> leave the edge of the field and pass through the "
+            "centre of the stop. <b>Yellow</b> is the illumination path.</p>"
+            "<p>The two rows under the axis are the <b>conjugate planes</b>: field "
+            "planes on the upper row, pupil planes on the lower. Köhler illumination "
+            "is the puzzle of lining these up.</p>"
+            "<p><b>Add card</b> drops a white card anywhere on the axis and tells you "
+            "what lands there — a sharp image, an evenly filled pupil, or a blur. It "
+            "changes nothing; it only measures.</p>"
+            "<p><b>Run</b> forms the image your build actually makes and measures it. "
+            "Some rounds are graded on those measurements.</p>"
+        )
+        box.exec()
 
     def closeEvent(self, event) -> None:
         """Wait for any render in flight before the window goes away.

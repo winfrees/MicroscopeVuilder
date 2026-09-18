@@ -270,7 +270,7 @@ Where practical, compare a few benches against a published prescription.
 | M10 | Close the testing loop on the real bench | **Done**: `imaging/build_optics.py` resolves a bench into its optical state, `imaging/synthesis.py` renders through it, `imaging/metrics.py` measures the result. An achromat and an apochromat now render differently, and the catalog's chromatic term is anchored to the textbook `f/2000` |
 | M11 | Rounds 6–8: colour, flat field, camera port | **Done**: graded by a second *measured* pass that renders, alongside the live geometry pass. Non-plan objectives added to the catalog so round 7 has something to contrast against |
 | M12 | Game shell: parts budget, scoring, progress, specimen library | **Done**: budgets enforced, three-star rating, structural diff after a failure, atomic progress saves in the user config dir, nine specimens, and rounds that unlock on their prerequisite |
-| **M13** | Verification and polish | Catalog entries datasheet-checked, ribbon playtested, onboarding and art pass |
+| M13 | Verification and polish | **Partly done**: verification *tooling* built (`--verify-catalog`, and a loader that refuses `verified = true` without a citation), onboarding and ribbon labelling done, playtest script written. The datasheet check itself and the playtest are human work that remains — see below |
 
 **Recommended order: M10 → M11 → M8b → M12 → M13.** M10 unblocks M11 (see below) and
 supplies the metrics M12's scoring depends on. M8b sits after M11 because phase contrast
@@ -377,13 +377,43 @@ whatever is on the bench into a source, a pupil mask and a field transform.
   prerequisite, with the contrast techniques gated on Köhler rather than on the
   round before them.
 
+### M13 — verification and polish (partly done)
+
+Done:
+
+- **`--verify-catalog`** prints a per-field checklist of what needs confirming
+  against which product, so the datasheet pass is mechanical rather than research.
+- **The loader refuses a catalog** in which any entry is marked `verified = true`
+  without a `source` and a `checked_on` date. Without that guard the flag is just an
+  assertion, and the provenance scheme rests on it meaning something a reader can
+  follow up.
+- **The workspace says so.** A permanent status-bar banner states that catalog
+  specifications are unverified and that aberration budgets are pedagogical by
+  design — where the audience will actually see it, not buried in a file header.
+- **Onboarding** (F1) explains the ray colours, the two ribbon rows, the white card
+  and the Run loop.
+- **Ribbon labelling**: rows are captioned and every tick is named, with its
+  position on hover.
+
+**Not done, and not doable from here:**
+
+- **The datasheet check itself.** Every one of the 13 objective entries is still
+  `verified = false`: the specifications were written from secondary knowledge and
+  have not been confirmed against Nikon's current datasheets. The tooling makes that
+  pass straightforward; it does not perform it, and nothing in this repository
+  should be read as claiming these numbers are datasheet-accurate.
+- **The ribbon playtest.** `docs/PLAYTEST.md` is the script: who to test with, what
+  to watch for, and a decision rule that includes cutting the ribbon if the white
+  card turns out to do its job better. It needs a person who has not seen the
+  workspace, which is the one thing that cannot be automated.
+
 ### Risk register
 
 | Risk | State |
 |---|---|
 | Partial-coherence synthesis defensible and fast enough | **Closed.** Abbe source integration, not Hopkins TCC; ~0.3 s at 384². The incoherent-PSF fallback is now unavailable anyway, since decision 4 needs complex amplitude |
-| Conjugate ribbon makes Köhler legible *to a person* | **Open, and unanswerable from code.** It renders, and tests confirm numerically that field and aperture planes interleave — but legibility needs a human. Playtest before rounds 13–15 lean on it further (M13) |
-| Aberration budgets a student will check against their own bench | **Partly open.** Provenance tracking and the UI disclaimer are built; 11 catalog entries remain `verified = false`, i.e. written from recall and not yet datasheet-checked (M13). The Zernike budgets stay `pedagogical` permanently and by design |
+| Conjugate ribbon makes Köhler legible *to a person* | **Open, and unanswerable from code.** Rows are now captioned and ticks named, which is the most that can be done without a subject. `docs/PLAYTEST.md` is the script, including a decision rule that permits cutting the ribbon if the white card does its job better |
+| Aberration budgets a student will check against their own bench | **Partly open.** Provenance tracking, the UI disclaimer, a verification checklist and a loader guard that refuses an uncited `verified = true` are all built. All 13 catalog entries remain `verified = false`: the specifications were written from secondary knowledge and have not been confirmed against a datasheet. The Zernike budgets stay `pedagogical` permanently and by design |
 | Frozen-build portability | **Closed by building locally**: PyInstaller ≥ 6.22 for numpy 2.4, xcb libraries present at build time, oldest-supported Linux runner |
 | Unsigned macOS and Windows binaries | **Open by choice.** First launch needs Right-click → Open or "Run anyway"; stated in the release body and README. Signing needs an Apple Developer ID and a Windows certificate — a cost decision, not a technical one |
 | 3D view | **Deferred by design** (decision 3). The bench is 3D-native and the renderer sits behind a protocol, so this stays a second renderer rather than a rewrite |

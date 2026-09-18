@@ -287,9 +287,10 @@ class BenchScene(QtWidgets.QGraphicsScene):
         the ticks in a row to line up, so they have to be visible before any round
         depends on them.
         """
-        rows = {"field": (self.RIBBON_OFFSET_MM, COLOR_FIELD_SET),
-                "aperture": (self.RIBBON_OFFSET_MM + self.RIBBON_ROW_MM, COLOR_APERTURE_SET)}
-        for kind, (offset, color) in rows.items():
+        rows = {"field": (self.RIBBON_OFFSET_MM, COLOR_FIELD_SET, "field / image planes"),
+                "aperture": (self.RIBBON_OFFSET_MM + self.RIBBON_ROW_MM, COLOR_APERTURE_SET,
+                             "aperture / pupil planes")}
+        for kind, (offset, color, row_label) in rows.items():
             planes = [c for c in self.model.conjugates if c.kind == kind]
             if not planes:
                 continue
@@ -299,6 +300,13 @@ class BenchScene(QtWidgets.QGraphicsScene):
                 [QtCore.QPointF(min(xs) - 5, y), QtCore.QPointF(max(xs) + 5, y)],
                 color, 0.3, dashed=True,
             )
+            caption = QtWidgets.QGraphicsSimpleTextItem(row_label)
+            caption.setBrush(QtGui.QBrush(color))
+            caption.setPos(min(xs) - 5, y - 2.6)
+            caption.setScale(0.09)
+            caption.setFlag(QtWidgets.QGraphicsItem.ItemIgnoresTransformations, False)
+            self._add(caption)
+
             for c, x in zip(planes, xs):
                 tick = QtWidgets.QGraphicsLineItem(x, y - 1.6, x, y + 1.6)
                 pen = QtGui.QPen(color, 1.4)
@@ -306,6 +314,15 @@ class BenchScene(QtWidgets.QGraphicsScene):
                 tick.setPen(pen)
                 tick.setToolTip(f"{c.label} ({kind} conjugate, s = {c.s:.2f} mm)")
                 self._add(tick)
+
+                # Name each plane. The ribbon's whole job is to make conjugacy
+                # legible, and an unlabelled tick asks the player to remember what
+                # is at 120 mm instead of showing them.
+                text = QtWidgets.QGraphicsSimpleTextItem(c.label)
+                text.setBrush(QtGui.QBrush(color))
+                text.setPos(x + 0.4, y + 0.4)
+                text.setScale(0.08)
+                self._add(text)
 
     # --- selection -----------------------------------------------------------
 

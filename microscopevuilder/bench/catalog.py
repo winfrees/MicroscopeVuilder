@@ -68,6 +68,8 @@ class Objective:
     grade: str
     aberrations: Aberrations
     verified: bool
+    source: str = ""
+    checked_on: str = ""
 
     def focal_length_mm(self, tube_lens_focal_length_mm: float) -> float:
         """f = f_tube / M -- the defining relation of an infinity system.
@@ -118,6 +120,44 @@ class Catalog:
         out += [f"objective:{k}" for k, o in self.objectives.items() if not o.verified]
         return out
 
+    def verification_report(self) -> str:
+        """A checklist for whoever does the datasheet pass.
+
+        Lists exactly which fields need confirming against which product, so the
+        work is mechanical rather than a research exercise. Marking an entry
+        verified requires filling in `source` and `checked_on`; the loader refuses
+        the catalog otherwise.
+        """
+        lines = [
+            f"Catalog verification -- {self.system.name}",
+            "",
+            "Specification fields below are recorded from secondary knowledge and "
+            "have NOT been checked against a datasheet.",
+            "Aberration budgets are pedagogical by design and are never verified; "
+            "manufacturers do not publish Zernike budgets.",
+            "",
+            f"System: tube lens {self.system.tube_lens_focal_length_mm:.0f} mm, "
+            f"parfocal {self.system.parfocal_distance_mm:.0f} mm "
+            f"[{'verified' if self.system.verified else 'UNVERIFIED'}]",
+            "",
+        ]
+        for key, o in sorted(self.objectives.items()):
+            mark = "verified" if o.verified else "UNVERIFIED"
+            lines.append(f"[{mark}] {key}")
+            lines.append(f"    label              {o.label}")
+            lines.append(f"    magnification      {o.magnification:g}x")
+            lines.append(f"    numerical aperture {o.na:g}")
+            lines.append(f"    working distance   {o.working_distance_mm:g} mm")
+            lines.append(f"    immersion          {o.immersion}")
+            if o.verified:
+                lines.append(f"    source             {o.source} ({o.checked_on})")
+            else:
+                lines.append("    source             -- add `source` and `checked_on` to mark verified")
+            lines.append("")
+        pending = len([o for o in self.objectives.values() if not o.verified])
+        lines.append(f"{pending} of {len(self.objectives)} objectives await a datasheet check.")
+        return "\n".join(lines)
+
 
 MEDIA: dict[str, float] = {}
 
@@ -158,10 +198,25 @@ def load_catalog(path: Path | None = None) -> Catalog:
                 source=str(ab.get("source", "pedagogical")),
             ),
             verified=bool(o.get("verified", False)),
+            source=str(o.get("source", "")),
+            checked_on=str(o.get("checked_on", "")),
         )
 
     if any(o.immersion not in media for o in objectives.values()):
         missing = {o.immersion for o in objectives.values()} - set(media)
         raise ValueError(f"catalog references undefined media: {sorted(missing)}")
+
+    # A verified entry must say where it was verified from. Without this guard
+    # "verified = true" is just an assertion, and the whole provenance scheme rests
+    # on it meaning something a reader can follow up.
+    unsourced = [
+        key for key, o in objectives.items()
+        if o.verified and not (o.source and o.checked_on)
+    ]
+    if unsourced:
+        raise ValueError(
+            "these entries are marked verified but cite no source and date: "
+            f"{sorted(unsourced)}. Verification means a citation, not a flag."
+        )
 
     return Catalog(system=system, objectives=objectives, media=media)

@@ -268,3 +268,104 @@ def test_the_usaf_target_carries_both_orientations():
     rows = target.std(axis=1).max()
     columns = target.std(axis=0).max()
     assert rows > 0.05 and columns > 0.05
+
+
+# --- M13: verification tooling -----------------------------------------------
+
+
+def test_the_catalog_reports_what_still_needs_checking():
+    from microscopevuilder.bench.catalog import load_catalog
+
+    report = load_catalog().verification_report()
+    assert "UNVERIFIED" in report
+    assert "await a datasheet check" in report
+    # The pedagogical budgets must never be presented as checkable facts.
+    assert "never verified" in report
+
+
+MINIMAL_CATALOG = """
+[system]
+name = "Test system"
+tube_lens_focal_length_mm = 200.0
+parfocal_distance_mm = 60.0
+reference_wavelength_nm = 546.1
+verified = false
+
+[objectives.test_20x]
+label = "Test 20x/0.75"
+magnification = 20.0
+na = 0.75
+working_distance_mm = 1.0
+immersion = "air"
+grade = "plan_apochromat"
+verified = {verified}
+{citation}
+[objectives.test_20x.aberrations]
+source = "pedagogical"
+spherical_rms_um = 0.010
+astigmatism_rms_um = 0.009
+field_curvature_sag_um = 0.40
+chromatic_focus_fraction = 4.0e-5
+
+[media.air]
+index = 1.0
+"""
+
+
+def _write_catalog(tmp_path, verified: bool, citation: str = ""):
+    path = tmp_path / "components.toml"
+    path.write_text(
+        MINIMAL_CATALOG.format(verified=str(verified).lower(), citation=citation),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_marking_an_entry_verified_requires_a_citation(tmp_path):
+    # Without this guard, `verified = true` is just an assertion and the whole
+    # provenance scheme means nothing.
+    from microscopevuilder.bench.catalog import load_catalog
+
+    path = _write_catalog(tmp_path, verified=True)
+    load_catalog.cache_clear()
+    try:
+        with pytest.raises(ValueError, match="cite no source"):
+            load_catalog(path)
+    finally:
+        load_catalog.cache_clear()
+
+
+def test_a_verified_entry_with_a_citation_is_accepted(tmp_path):
+    from microscopevuilder.bench.catalog import load_catalog
+
+    path = _write_catalog(
+        tmp_path,
+        verified=True,
+        citation='source = "example datasheet"\nchecked_on = "2026-01-01"',
+    )
+    load_catalog.cache_clear()
+    try:
+        catalog = load_catalog(path)
+        assert catalog.objective("test_20x").verified
+        assert "example datasheet" in catalog.verification_report()
+    finally:
+        load_catalog.cache_clear()
+
+
+def test_an_unverified_entry_needs_no_citation(tmp_path):
+    from microscopevuilder.bench.catalog import load_catalog
+
+    path = _write_catalog(tmp_path, verified=False)
+    load_catalog.cache_clear()
+    try:
+        assert load_catalog(path).unverified_entries()
+    finally:
+        load_catalog.cache_clear()
+
+
+def test_the_shipped_catalog_is_honest_about_being_unverified():
+    # If this ever starts failing because entries were verified, that is good news
+    # -- but it must happen with citations attached, which the loader enforces.
+    from microscopevuilder.bench.catalog import load_catalog
+
+    assert load_catalog().unverified_entries()

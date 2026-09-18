@@ -28,8 +28,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--progress", type=Path, help="progress file (default: user config dir)")
     parser.add_argument("--diff", action="store_true", help="on failure, diff against a working build")
+    parser.add_argument(
+        "--verify-catalog", action="store_true",
+        help="print which catalog entries still need a datasheet check",
+    )
     parser.add_argument("--save-reference", type=Path, help="write the reference build to JSON")
     args = parser.parse_args(argv)
+
+    if args.verify_catalog:
+        from .bench.catalog import load_catalog
+
+        print(load_catalog().verification_report())
+        return 0
 
     if args.list:
         progress = Progress.load(args.progress)
