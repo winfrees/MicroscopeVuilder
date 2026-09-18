@@ -228,7 +228,11 @@ def check_sampling(
 
 
 def check_optical_tube_length(
-    bench: Bench, objective_name: str, image_name: str, target_mm: float = 160.0
+    bench: Bench,
+    objective_name: str,
+    image_name: str,
+    target_mm: float = 160.0,
+    tolerance: float = 0.02,
 ) -> RuleResult:
     """Finite-tube convention: the objective is corrected for one tube length.
 
@@ -247,7 +251,7 @@ def check_optical_tube_length(
         name="Optical tube length",
         measured=length,
         target=target_mm,
-        tolerance=0.01,
+        tolerance=tolerance,
         units="mm",
         equation=(
             f"L = {image_name} - (back focal plane of {objective_name}) = "

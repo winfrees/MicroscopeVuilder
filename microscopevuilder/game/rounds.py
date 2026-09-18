@@ -13,6 +13,13 @@ from typing import Callable
 
 from ..bench.bench import Bench, BenchElement
 from ..rules.base import RuleReport
+from ..rules.tolerances import (
+    MAGNIFICATION_TOLERANCE,
+    field_conjugate_tolerance_mm,
+    image_side_depth_of_focus_mm,
+    pupil_conjugate_tolerance_mm,
+    tube_length_tolerance,
+)
 from ..rules.checks import (
     check_condenser_na_match,
     check_conjugate,
@@ -56,8 +63,13 @@ class Round:
 def _round1_evaluate(bench: Bench) -> RuleReport:
     report = RuleReport()
     s_obj = -60.0
-    report.add(check_image_lands_on_detector(bench, s_obj, "screen", tolerance_mm=0.5))
-    report.add(check_magnification(bench, s_obj, "screen", target=5.0, tolerance=0.05))
+    # The focus tolerance is the image-side depth of focus, not a chosen number.
+    na = bench.to_paraxial().object_space_na(s_obj)
+    focus_tol = image_side_depth_of_focus_mm(0.5461, max(na, 1e-3), 5.0)
+    report.add(check_image_lands_on_detector(bench, s_obj, "screen", tolerance_mm=focus_tol))
+    report.add(
+        check_magnification(bench, s_obj, "screen", target=5.0, tolerance=MAGNIFICATION_TOLERANCE)
+    )
     report.add(check_no_unintended_clipping(bench, s_obj, field_height_mm=1.0))
     return report
 
@@ -99,11 +111,20 @@ def _round2_evaluate(bench: Bench) -> RuleReport:
     objective = bench.get("objective")
     s_obj = objective.s - _round2_object_distance(objective.focal_length_mm or 1.0)
 
+    na = float(objective.metadata.get("na", 0.25))
+    focus_tol = image_side_depth_of_focus_mm(0.5461, na, 10.0)
     report.add(
-        check_optical_tube_length(bench, "objective", "intermediate_image", OPTICAL_TUBE_LENGTH_MM)
+        check_optical_tube_length(
+            bench, "objective", "intermediate_image", OPTICAL_TUBE_LENGTH_MM,
+            tolerance=tube_length_tolerance(MAGNIFICATION_TOLERANCE),
+        )
     )
-    report.add(check_image_lands_on_detector(bench, s_obj, "intermediate_image", 0.2))
-    report.add(check_magnification(bench, s_obj, "intermediate_image", target=10.0, tolerance=0.05))
+    report.add(check_image_lands_on_detector(bench, s_obj, "intermediate_image", focus_tol))
+    report.add(
+        check_magnification(
+            bench, s_obj, "intermediate_image", target=10.0, tolerance=MAGNIFICATION_TOLERANCE
+        )
+    )
     report.add(check_no_unintended_clipping(bench, s_obj, field_height_mm=0.5))
     report.add(check_relaxed_eye(bench, "intermediate_image", "eyepiece"))
     report.add(_check_visual_magnification(bench, target=100.0))
@@ -257,11 +278,24 @@ def _illumination_stand(
     )
 
 
+def _collected_na(bench: Bench) -> float:
+    """NA the collector gathers from the lamp: r / d."""
+    collector = bench.get("collector")
+    lamp = bench.get("lamp")
+    return collector.semi_diameter_mm / max(collector.s - lamp.s, 1e-6)
+
+
 def _round3_evaluate(bench: Bench) -> RuleReport:
     report = RuleReport()
+    # Critical illumination puts the lamp on a FIELD plane, so depth of focus is
+    # the right criterion -- you are meant to see the filament sharply.
+    na_illum = condenser_na(bench, "aperture_diaphragm", "condenser")
     report.add(
-        check_conjugate(bench, bench.get("lamp").s, "specimen", "Lamp on specimen",
-                        tolerance_mm=1.0, from_label="the filament")
+        check_conjugate(
+            bench, bench.get("lamp").s, "specimen", "Lamp on specimen",
+            tolerance_mm=field_conjugate_tolerance_mm(0.5461, na_illum),
+            from_label="the filament",
+        )
     )
     report.add(check_illumination_throughput(bench, "lamp", "collector", required_na=0.4))
     report.add(check_no_unintended_clipping(bench, SPECIMEN_S, field_height_mm=0.3))
@@ -330,20 +364,32 @@ def _round4_evaluate(bench: Bench) -> RuleReport:
     bfp_s = objective.s + (objective.focal_length_mm or 0.0)
 
     # The four-plane conjugacy, stated as four questions.
+    # The lamp lands on a PUPIL, so the criterion is whether its image still fits
+    # inside the diaphragm -- not depth of focus, which would blur nothing here.
+    pupil_tol = pupil_conjugate_tolerance_mm(
+        bench.get("aperture_diaphragm").semi_diameter_mm, _collected_na(bench)
+    )
+    field_tol = field_conjugate_tolerance_mm(
+        0.5461, condenser_na(bench, "aperture_diaphragm", "condenser")
+    )
     report.add(
         check_conjugate(bench, bench.get("lamp").s, "aperture_diaphragm",
-                        "Lamp on aperture diaphragm", 1.0, "the filament")
+                        "Lamp on aperture diaphragm", pupil_tol, "the filament")
     )
     report.add(
         check_conjugate(bench, bench.get("field_diaphragm").s, "specimen",
-                        "Field diaphragm on specimen", 1.0, "the field diaphragm")
+                        "Field diaphragm on specimen", field_tol, "the field diaphragm")
     )
     report.add(
         check_conjugate_to_plane(
             bench, bench.get("aperture_diaphragm").s, bfp_s,
             "Aperture diaphragm on back focal plane",
             f"the objective back focal plane (s = {bfp_s:.2f} mm)",
-            tolerance_mm=1.0, from_label="the aperture diaphragm",
+            tolerance_mm=pupil_conjugate_tolerance_mm(
+                bench.get("objective").semi_diameter_mm,
+                float(objective.metadata.get("na", 0.25)),
+            ),
+            from_label="the aperture diaphragm",
         )
     )
     # ...and the half that is easy to forget.
@@ -393,8 +439,11 @@ def _round5_evaluate(bench: Bench) -> RuleReport:
     report.add(check_resolution(na_obj, na_cond, 0.5461, required_um=0.50))
     report.add(check_condenser_na_match(na_obj, na_cond))
     report.add(
-        check_conjugate(bench, bench.get("field_diaphragm").s, "specimen",
-                        "Field diaphragm on specimen", 1.0, "the field diaphragm")
+        check_conjugate(
+            bench, bench.get("field_diaphragm").s, "specimen",
+            "Field diaphragm on specimen",
+            field_conjugate_tolerance_mm(0.5461, na_cond), "the field diaphragm",
+        )
     )
     report.add(check_illumination_uniformity(bench, "lamp", "specimen", "condenser"))
     return report
