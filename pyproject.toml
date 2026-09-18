@@ -12,7 +12,7 @@ dependencies = ["numpy>=1.26", "platformdirs>=4.0"]
 
 [project.optional-dependencies]
 ui = ["PySide6>=6.6"]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "pyyaml>=6.0"]
 
 [project.scripts]
 microscopevuilder = "microscopevuilder.__main__:main"

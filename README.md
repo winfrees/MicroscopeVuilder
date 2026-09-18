@@ -14,6 +14,10 @@ See [`docs/PLAN.md`](docs/PLAN.md) for the full design and implementation plan.
 
 Self-contained executables for each platform are attached to every
 [release](../../releases) — one file, no installer, no Python, no `pip`.
+
+Every commit to `main` publishes a development build (a prerelease tagged
+`build-N`); tagged `v*` versions publish a stable release. Both run the full test
+suite and exercise real rounds against the frozen binary before publishing.
 On macOS and Linux, `chmod +x MicroscopeVuilder-*` before the first run. The macOS
 and Windows builds are not code-signed, so the first launch needs Right-click → Open
 (macOS) or "More info" → "Run anyway" (Windows).
@@ -39,8 +43,9 @@ pyinstaller packaging/microscopevuilder.spec --noconfirm
 ./dist/MicroscopeVuilder --round 12          # smoke-test the frozen build
 ```
 
-Tagging `v*` builds and publishes executables for Linux, Windows and both macOS
-architectures via `.github/workflows/release.yml`.
+`.github/workflows/release.yml` builds Linux, Windows and both macOS architectures.
+It publishes a prerelease on every push to `main` and a stable release on a `v*`
+tag; running it by hand builds the artifacts without publishing anything.
 
 ## Development
 

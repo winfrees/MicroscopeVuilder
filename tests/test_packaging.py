@@ -53,6 +53,36 @@ def test_the_spec_builds_one_file_not_a_directory():
     assert "a.binaries" in spec and "a.datas" in spec  # folded into the EXE
 
 
+def test_the_intel_macos_job_uses_a_label_that_still_has_runners():
+    # macos-13 was used here first and never received a runner: the image is
+    # retired, so the job sat queued indefinitely and, because publish depended on
+    # the whole matrix, no release could go out at all. timeout-minutes does not
+    # help, since it only counts once a job is running. macos-15-intel is the
+    # current Intel image.
+    import yaml
+
+    workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    spec = yaml.safe_load(workflow)
+    runners = {m["os"] for m in spec["jobs"]["build"]["strategy"]["matrix"]["include"]}
+    assert "macos-13" not in runners
+    assert "macos-15-intel" in runners
+
+
+def test_all_four_platforms_publish_from_one_job():
+    # An earlier version built Intel in a separate job with its own publish step,
+    # to keep a slow runner off the critical path. That turned out to be solving
+    # the wrong problem -- the label was retired, not scarce -- and it left a
+    # window where the release existed with only one asset on it.
+    import yaml
+
+    spec = yaml.safe_load((REPO / ".github" / "workflows" / "release.yml").read_text())
+    assert set(spec["jobs"]) == {"build", "publish"}
+    labels = {m["label"] for m in spec["jobs"]["build"]["strategy"]["matrix"]["include"]}
+    assert labels == {
+        "linux-x86_64", "windows-x86_64", "macos-x86_64", "macos-arm64",
+    }
+
+
 def test_release_workflow_publishes_executables_for_every_platform():
     workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     for asset in (
@@ -65,6 +95,32 @@ def test_release_workflow_publishes_executables_for_every_platform():
     assert "softprops/action-gh-release" in workflow
     assert 'tags: ["v*"]' in workflow
     assert "contents: write" in workflow
+
+
+def test_every_commit_to_main_publishes_a_build():
+    workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "branches: [main]" in workflow
+    assert "build-${GITHUB_RUN_NUMBER}" in workflow
+
+
+def test_main_builds_are_prereleases_so_they_do_not_displace_a_tagged_version():
+    # Otherwise every commit would steal the "Latest release" badge from the
+    # version people are meant to download.
+    workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "prerelease=true" in workflow
+    assert "prerelease=false" in workflow
+    assert "prerelease: ${{ steps.kind.outputs.prerelease }}" in workflow
+
+
+def test_a_hand_triggered_run_builds_without_publishing():
+    workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "if: github.event_name == 'push'" in workflow
+
+
+def test_superseded_main_builds_are_cancelled_but_tagged_releases_are_not():
+    workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "concurrency:" in workflow
+    assert "cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}" in workflow
 
 
 def test_release_workflow_tests_and_smoke_tests_before_publishing():

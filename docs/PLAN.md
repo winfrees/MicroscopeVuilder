@@ -237,8 +237,11 @@ Where practical, compare a few benches against a published prescription.
 - Package with **PyInstaller one-file**, per platform — an executable, not an
   installer. The audience is students on lab machines who may not have rights to run
   an installer or to `pip install`, so the deliverable is a single downloadable file.
-  CI matrix on GitHub Actions (Linux, Windows, macOS Intel and Apple silicon),
-  attached to a GitHub Release on a `v*` tag. Two constraints learned by building it:
+  CI matrix on GitHub Actions (Linux, Windows, macOS Intel and Apple silicon).
+  **Every commit to `main` publishes a development build** as a prerelease tagged
+  `build-N`, so the current state is always downloadable; a `v*` tag publishes a
+  stable release. Development builds are prereleases specifically so they never
+  displace the "Latest release" badge that points at a real version. Two constraints learned by building it:
   Linux builds must run on the **oldest** supported runner (glibc is forward but not
   backward compatible) and must install the xcb development libraries at *build*
   time, or PyInstaller cannot resolve the Qt platform plugin's dependencies and
