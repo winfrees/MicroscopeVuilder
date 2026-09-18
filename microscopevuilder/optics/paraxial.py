@@ -146,16 +146,21 @@ class ParaxialSystem:
         rays leaving one object point arrive at one height regardless of angle.
         Returns ``None`` when the outgoing light is collimated (image at infinity),
         which is the normal, correct answer in an infinity-corrected build.
+
+        ``search_to`` bounds the trace, not just the search: asking where the
+        *intermediate* image lands must not trace through the eyepiece that follows
+        it. Elements beyond ``search_to`` are excluded entirely.
         """
         last = self.elements[-1].s if self.elements else s_object
         end = search_to if search_to is not None else last + 1.0
-        m = self.between(s_object, max(end, last + 1e-9))
+        end = max(end, s_object + 1e-9)
+        m = self.between(s_object, end)
         # Propagating a further distance t past `end` gives B' = B + t*D.
         a, b, c, d = m[0, 0], m[0, 1], m[1, 0], m[1, 1]
         if abs(d) < 1e-12:
             return None  # afocal in this sense: no finite conjugate
         t = -b / d
-        s_img = max(end, last + 1e-9) + t
+        s_img = end + t
         return float(s_img)
 
     def magnification(self, s_object: float, s_image: float) -> float:

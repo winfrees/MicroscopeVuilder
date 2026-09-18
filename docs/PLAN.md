@@ -114,7 +114,7 @@ A declarative rule set evaluated on the built bench. Examples:
 
 | Invariant | Check |
 |---|---|
-| Parfocality / tube length | Objective shoulder-to-image = 160 mm (DIN) or ∞ + tube lens |
+| Optical tube length | Back focal plane to intermediate image = design L, so `M = L/f`. Measured from the BFP, not the objective (that is `L + f`), and not the mechanical tube length |
 | Köhler conjugates | lamp ≡ aperture diaphragm ≡ objective back focal plane ≡ eyepoint |
 | Field conjugates | field diaphragm ≡ specimen ≡ intermediate image ≡ retina/sensor |
 | NA match | `NA_cond ≈ NA_obj` (0.7–1.0×), immersion medium consistency |
@@ -238,7 +238,7 @@ Where practical, compare a few benches against a published prescription.
 | M1 | `optics/` paraxial ABCD, stops/pupils, 3D folding | Golden tests pass |
 | M2 | `optics/` wavefront + PSF/OTF + CFI60 catalog | **Done for the incoherent path**: Airy zero, 84% encircled energy, analytic MTF, quarter-wave Strehl all reproduce |
 | M2b | Partial coherence (Abbe source integration) | **Done**: S->0 matches the coherent formula to 1e-12; the `(1+S) NA/lambda` cutoff holds at S = 0, 0.5, 1; a 0.2 rad phase object is invisible in brightfield |
-| M3 | Headless round 1–2 solvable via script | Solver test passes |
+| M3 | Bench model, rule engine, rounds 1–2, headless runner | **Done**: `python -m microscopevuilder --round N`; reference builds pass and wrong builds fail for the stated reason |
 | M4 | Qt workspace: drag, ray overlay, inspector | Playable round 2 |
 | M5 | Testing loop, scorecard, conjugate ribbon | Rounds 1–5 |
 | M6 | Illumination depth: Köhler, NA matching | Rounds 3–5 tuned, tolerances validated |
