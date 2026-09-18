@@ -12,7 +12,15 @@ See [`docs/PLAN.md`](docs/PLAN.md) for the full design and implementation plan.
 
 ## Status
 
-Early. Milestone M1 (paraxial ABCD engine, stops and pupils) is in progress.
+Milestones M0-M4 complete: paraxial engine, CFI60 catalog, wavefront and diffraction
+layers, partially coherent imaging, the bench and rule engine, rounds 1-2, and the Qt
+workspace.
+
+```sh
+python -m microscopevuilder --list           # implemented rounds
+python -m microscopevuilder --round 2        # grade the reference build headlessly
+python -m microscopevuilder --ui --round 2   # open the workspace (needs the 'ui' extra)
+```
 
 ## Development
 

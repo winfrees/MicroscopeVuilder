@@ -288,3 +288,35 @@ def check_infinity_space(bench: Bench, s_object: float, objective_name: str) -> 
             f"s = {objective.s - (objective.focal_length_mm or 0):.3f} mm"
         ),
     )
+
+
+def check_relaxed_eye(bench: Bench, image_name: str, eyepiece_name: str) -> RuleResult:
+    """Is the intermediate image at the eyepiece's front focal plane?
+
+    If it is, the eyepiece sends a collimated bundle and the eye focuses at
+    infinity -- what "relaxed" means, and why a correctly built scope is not
+    tiring. If it is not, the user accommodates to make up the difference, which
+    works (so nothing looks obviously wrong) and causes eyestrain over an hour.
+    A rule is the only way this becomes visible in a game.
+    """
+    image = bench.get(image_name)
+    eyepiece = bench.get(eyepiece_name)
+    f_eye = eyepiece.focal_length_mm or 0.0
+    separation = eyepiece.s - image.s
+
+    return tolerance_result(
+        name="Relaxed eye",
+        measured=separation,
+        target=f_eye,
+        tolerance=0.02,
+        units="mm",
+        equation=(
+            f"{eyepiece_name} - {image_name} = {separation:.2f} mm; the eyepiece's "
+            f"front focal length is {f_eye:.2f} mm, so collimated output needs them equal"
+        ),
+        culprit=eyepiece_name,
+        remedy=(
+            f"move {eyepiece_name} to s = {image.s + f_eye:.2f} mm; further out and "
+            "the eye must accommodate, which is invisible at first and tiring by lunchtime"
+        ),
+    )

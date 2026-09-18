@@ -19,6 +19,7 @@ from ..rules.checks import (
     check_no_unintended_clipping,
     check_resolution,
     check_optical_tube_length,
+    check_relaxed_eye,
 )
 
 VISUAL_REFERENCE_DISTANCE_MM = 250.0  # the conventional near point for visual M
@@ -97,6 +98,7 @@ def _round2_evaluate(bench: Bench) -> RuleReport:
     report.add(check_image_lands_on_detector(bench, s_obj, "intermediate_image", 0.2))
     report.add(check_magnification(bench, s_obj, "intermediate_image", target=10.0, tolerance=0.05))
     report.add(check_no_unintended_clipping(bench, s_obj, field_height_mm=0.5))
+    report.add(check_relaxed_eye(bench, "intermediate_image", "eyepiece"))
     report.add(_check_visual_magnification(bench, target=100.0))
     report.add(check_resolution(0.25, 0.0, 0.5461, required_um=2.5))
     return report

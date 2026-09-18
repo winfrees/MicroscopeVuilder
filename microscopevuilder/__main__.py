@@ -19,6 +19,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--round", type=int, default=1, help="round number to grade")
     parser.add_argument("--bench", type=Path, help="bench JSON to grade (default: the reference build)")
     parser.add_argument("--list", action="store_true", help="list implemented rounds")
+    parser.add_argument("--ui", action="store_true", help="open the graphical workspace")
     parser.add_argument("--save-reference", type=Path, help="write the reference build to JSON")
     args = parser.parse_args(argv)
 
@@ -26,6 +27,14 @@ def main(argv: list[str] | None = None) -> int:
         for n, r in sorted(ROUNDS.items()):
             print(f"{n}. {r.title} -- {r.teaches}")
         return 0
+
+    if args.ui:
+        try:
+            from .ui.workspace import launch
+        except ImportError as exc:  # pragma: no cover - depends on optional extra
+            print(f"the workspace needs the 'ui' extra: pip install 'microscopevuilder[ui]' ({exc})")
+            return 2
+        return launch(args.round)
 
     rnd = get_round(args.round)
     bench = Bench.load(args.bench) if args.bench else rnd.reference_build()
