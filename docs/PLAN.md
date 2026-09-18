@@ -234,9 +234,15 @@ Where practical, compare a few benches against a published prescription.
 
 ## 5. Distribution
 
-- Package with **PyInstaller** (one-folder for size, one-file option) per platform;
-  CI matrix on GitHub Actions producing macOS `.app`/dmg, Windows `.exe`, Linux
-  AppImage or tarball.
+- Package with **PyInstaller one-file**, per platform — an executable, not an
+  installer. The audience is students on lab machines who may not have rights to run
+  an installer or to `pip install`, so the deliverable is a single downloadable file.
+  CI matrix on GitHub Actions (Linux, Windows, macOS Intel and Apple silicon),
+  attached to a GitHub Release on a `v*` tag. Two constraints learned by building it:
+  Linux builds must run on the **oldest** supported runner (glibc is forward but not
+  backward compatible) and must install the xcb development libraries at *build*
+  time, or PyInstaller cannot resolve the Qt platform plugin's dependencies and
+  silently ships a binary that will not start.
 - Also publish to PyPI as `microscopevuilder` with a `microscopevuilder` console entry
   point for the `pip` crowd.
 - Saves, progress and custom benches in a per-user config dir (`platformdirs`), never
@@ -258,9 +264,9 @@ Where practical, compare a few benches against a published prescription.
 | M5 | Illumination rounds, conjugacy rules, illumination ray path | **Done**: rounds 3–5 with the four-plane Köhler check, throughput, condenser NA matching |
 | M6 | Derived tolerances | **Done**: every focus tolerance traces to the Rayleigh quarter-wave criterion and is validated against the PSF engine; pupil conjugates use a separate geometric criterion |
 | M7 | Epi + fluorescence on **branched** benches | **Done**: rounds 9–10; the bench gained arms, since an epi path is a second path, not a folded one |
-| M8 | Infinity correction, full stand, sandbox | Rounds 11–12 |
+| M8 | Infinity correction, parfocal turret, sandbox | **Done**: rounds 11–12; a glass-plate element makes the infinity-space argument demonstrable, and the bench gained enabled/disabled elements so a turret traces one objective |
 | M8b | Complex-amplitude contrast: phase, polarization, DIC | Rounds 13–15 |
-| M9 | Packaging, installers, onboarding, art pass | Signed builds published |
+| M9 | Packaging: one-file executables, published to Releases | **Done**: PyInstaller one-file per platform, built and smoke-tested in CI, attached to a GitHub Release on `v*` tags. Unsigned — noted in the release body |
 
 **Highest-risk items, front-loaded**: (a) partial-coherence image synthesis (Hopkins TCC)
 that is both physically defensible and fast enough — prototype in M2; the documented

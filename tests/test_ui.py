@@ -350,3 +350,20 @@ def test_arm_elements_are_placed_off_the_main_axis(app):
         i for i in scene.items() if isinstance(i, ElementItem) and i.name == "objective"
     )
     assert lamp_item.pos() != objective_item.pos()
+
+
+@pytest.mark.parametrize("number", [0, 11, 12])
+def test_infinity_and_sandbox_rounds_open(app, number):
+    w = Workspace(number)
+    assert w.report_panel.list.topLevelItemCount() > 0
+    image = QtGui.QImage(700, 350, QtGui.QImage.Format_ARGB32)
+    painter = QtGui.QPainter(image)
+    w.scene.render(painter)
+    painter.end()
+
+
+def test_a_turret_draws_every_objective_even_the_ones_out_of_the_path(app):
+    # They are fitted; the renderer should show them, and only the trace ignores them.
+    w = Workspace(12)
+    items = [i for i in w.scene.items() if isinstance(i, ElementItem)]
+    assert sum(1 for i in items if "objective" in i.name) == 3

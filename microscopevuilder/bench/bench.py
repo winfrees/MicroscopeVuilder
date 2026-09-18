@@ -16,7 +16,13 @@ from pathlib import Path
 
 import numpy as np
 
-from ..optics.paraxial import Element, ParaxialSystem, aperture, thin_lens
+from ..optics.paraxial import (
+    Element,
+    ParaxialSystem,
+    aperture,
+    glass_plate,
+    thin_lens,
+)
 
 
 @dataclass(frozen=True)
@@ -93,9 +99,19 @@ class BenchElement:
     label: str = ""
     catalog_key: str | None = None
     arm: str = "main"
+    enabled: bool = True
     metadata: dict = field(default_factory=dict)
 
     def to_optical(self) -> Element:
+        thickness = self.metadata.get("thickness_mm")
+        if thickness:
+            # A plate carries real glass, so it is not a bare aperture: it displaces
+            # focus in converging light and does nothing in collimated light.
+            return glass_plate(
+                self.name, self.s, float(thickness),
+                float(self.metadata.get("index", 1.52)),
+                self.semi_diameter_mm, self.kind,
+            )
         if self.focal_length_mm is None:
             return aperture(self.name, self.s, self.semi_diameter_mm, self.kind)
         return thin_lens(
@@ -145,6 +161,14 @@ class Bench:
 
     def has(self, name: str) -> bool:
         return any(e.name == name for e in self.elements)
+
+    def select_turret(self, name: str) -> "Bench":
+        """Rotate one turret objective into the light path and the rest out."""
+        self.elements = [
+            replace(e, enabled=(e.name == name)) if e.metadata.get("in_turret") else e
+            for e in self.elements
+        ]
+        return self
 
     def of_kind(self, kind: str) -> list[BenchElement]:
         return [e for e in self.elements if e.kind == kind]
@@ -212,16 +236,16 @@ class Bench:
         if arm == "main":
             return ParaxialSystem(
                 [e.to_optical() for e in self.elements
-                 if e.arm == "main" and e.kind != "white_card"]
+                 if e.arm == "main" and e.kind != "white_card" and e.enabled]
             )
 
         spec = self.arms[arm]
         elements = [
             e.to_optical() for e in self.elements
-            if e.arm == arm and e.kind != "white_card"
+            if e.arm == arm and e.kind != "white_card" and e.enabled
         ]
         for e in self.elements:
-            if e.arm != "main" or e.kind == "white_card":
+            if e.arm != "main" or e.kind == "white_card" or not e.enabled:
                 continue
             if spec.continues == "reverse":
                 # Episcopic illumination runs the other way down the main axis: it
@@ -293,6 +317,7 @@ class Bench:
                     "label": e.label,
                     "catalog_key": e.catalog_key,
                     "arm": e.arm,
+                    "enabled": e.enabled,
                     "metadata": e.metadata,
                 }
                 for e in self.elements

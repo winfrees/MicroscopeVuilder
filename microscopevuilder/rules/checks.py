@@ -751,3 +751,112 @@ def check_stokes_shift(fluorophore, cube) -> RuleResult:
             "emission peaks -- that gap is the whole basis of the technique"
         ),
     )
+
+
+def check_filter_is_focus_neutral(
+    bench: Bench,
+    s_object: float,
+    detector_name: str,
+    filter_name: str,
+    tolerance_mm: float = 0.005,
+) -> RuleResult:
+    """Does inserting the filter move the image?
+
+    The practical payoff of an infinity space, and the only reason anyone went to
+    the trouble of redesigning objectives around it. A plane-parallel plate in
+    *converging* light displaces focus by ``t(1 - 1/n)``; in *collimated* light a
+    ray ``(y, 0)`` is unchanged by any transfer, so the plate does nothing. That is
+    why you can drop a filter, a dichroic or a DIC prism into an infinity space and
+    not refocus -- and why on a finite-tube stand you must.
+    """
+    detector = bench.get(detector_name)
+    plate = bench.get(filter_name)
+
+    without = Bench(
+        [e for e in bench.elements if e.name != filter_name],
+        bench.folds, tuple(bench.origin), tuple(bench.initial_direction),
+        list(bench.arms.values()),
+    )
+    s_with = bench.to_paraxial().image_plane(s_object, search_to=detector.s + 1e-6)
+    s_without = without.to_paraxial().image_plane(s_object, search_to=detector.s + 1e-6)
+
+    if s_with is None or s_without is None:
+        return RuleResult(
+            name="Filter neutrality",
+            status=Status.FAIL,
+            summary="no image forms with or without the filter, so nothing can be compared",
+            equation="B = 0 has no solution",
+            culprit=filter_name,
+        )
+
+    shift = abs(s_with - s_without)
+    thickness = float(plate.metadata.get("thickness_mm", 0.0))
+    index = float(plate.metadata.get("index", 1.52))
+    predicted = thickness * (1.0 - 1.0 / index) if index else 0.0
+
+    status = Status.PASS if shift <= tolerance_mm else Status.FAIL
+    return RuleResult(
+        name="Filter neutrality",
+        status=status,
+        summary=(
+            f"inserting {filter_name} moves the image by {shift:.4f} mm"
+            + (" -- it sits in collimated light, so it is focus-neutral"
+               if status is Status.PASS
+               else f" -- it is in converging light, where a plate shifts focus by t(1-1/n)")
+        ),
+        equation=(
+            f"t(1 - 1/n) = {thickness:.2f} x (1 - 1/{index:.3f}) = {predicted:.4f} mm "
+            f"in converging light; measured shift {shift:.4f} mm"
+        ),
+        measured=shift,
+        target=0.0,
+        units="mm",
+        culprit=None if status is Status.PASS else filter_name,
+        remedy=(
+            "move the filter into the infinity space between the objective and the "
+            "tube lens, where the bundle is collimated and a plate has no effect"
+        ),
+    )
+
+
+def check_parfocality(bench: Bench, objective_names: list[str], parfocal_mm: float = 60.0) -> RuleResult:
+    """Do all the turret objectives put their front focal plane in the same place?
+
+    Parfocality is a mechanical promise dressed as an optical one: every objective
+    in a matched set has the same shoulder-to-specimen distance, so rotating the
+    turret keeps focus. For CFI60 that distance is 60 mm. Different focal lengths
+    sit at different heights above the specimen, and the mount takes up the
+    difference.
+    """
+    if not objective_names:
+        return RuleResult("Parfocality", Status.NOT_APPLICABLE, "no turret fitted")
+
+    shoulders = {}
+    for name in objective_names:
+        objective = bench.get(name)
+        f = objective.focal_length_mm or 0.0
+        # The specimen sits at the front focal plane, so the lens is f above it and
+        # the shoulder is parfocal_mm above the specimen.
+        shoulders[name] = objective.s - f + parfocal_mm
+
+    spread = max(shoulders.values()) - min(shoulders.values())
+    status = Status.PASS if spread <= 0.01 else Status.FAIL
+    detail = ", ".join(f"{n} at {v:.2f}" for n, v in shoulders.items())
+    return RuleResult(
+        name="Parfocality",
+        status=status,
+        summary=(
+            f"all {len(objective_names)} objectives share a shoulder height to "
+            f"within {spread:.4f} mm"
+            if status is Status.PASS
+            else f"shoulder heights differ by {spread:.2f} mm, so the turret loses focus"
+        ),
+        equation=f"shoulder = objective_s - f + {parfocal_mm:.0f} mm: {detail}",
+        measured=spread,
+        target=0.0,
+        units="mm",
+        remedy=(
+            f"a matched {parfocal_mm:.0f} mm parfocal set puts every objective's "
+            "front focal plane at the same height; mixing series breaks that"
+        ),
+    )

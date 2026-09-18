@@ -26,7 +26,10 @@ from ..rules.checks import (
     check_conjugate,
     check_conjugate_to_plane,
     check_epi_separation,
+    check_filter_is_focus_neutral,
     check_filter_set,
+    check_infinity_space,
+    check_parfocality,
     check_stokes_shift,
     check_illumination_throughput,
     check_illumination_uniformity,
@@ -671,6 +674,267 @@ ROUND_10 = Round(
     ),
 )
 
+# --- rounds 11-12: infinity correction and the full stand --------------------
+#
+# CFI60 conventions throughout: 200 mm tube lens, 60 mm parfocal distance,
+# f_objective = 200 / M. The specimen sits at the objective's front focal plane,
+# so the space behind the objective is collimated and its length does not matter.
+
+CFI_TUBE_F = 200.0
+CFI_PARFOCAL = 60.0
+INF_SPECIMEN_S = 0.0
+INF_TUBE_LENS_S = 180.0
+INF_FILTER_S = 90.0          # in the infinity space, where a plate is harmless
+FILTER_THICKNESS_MM = 5.0
+FILTER_INDEX = 1.52
+
+
+def _infinity_stand(
+    magnification: float = 20.0,
+    na: float = 0.75,
+    filter_s: float = INF_FILTER_S,
+    tube_lens_s: float = INF_TUBE_LENS_S,
+) -> Bench:
+    """A CFI60 infinity stand: objective, infinity space, filter, tube lens, sensor."""
+    f_obj = CFI_TUBE_F / magnification
+    return Bench(
+        [
+            BenchElement("specimen", INF_SPECIMEN_S, "field_stop", 12.0, label="specimen"),
+            BenchElement(
+                "objective", INF_SPECIMEN_S + f_obj, "objective", 6.0, f_obj,
+                label=f"CFI {magnification:.0f}x/{na}", catalog_key="cfi_plan_apo_20x",
+                metadata={"na": na, "magnification": magnification, "parfocal_mm": CFI_PARFOCAL},
+            ),
+            BenchElement(
+                "filter", filter_s, "filter", 12.5, None, label="5 mm filter",
+                metadata={"thickness_mm": FILTER_THICKNESS_MM, "index": FILTER_INDEX},
+            ),
+            BenchElement("tube_lens", tube_lens_s, "tube_lens", 13.0, CFI_TUBE_F,
+                         label="CFI tube lens f = 200 mm"),
+            BenchElement("sensor", tube_lens_s + CFI_TUBE_F, "detector", 11.0, label="sensor"),
+        ]
+    )
+
+
+def _round11_evaluate(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    objective = bench.get("objective")
+    na = float(objective.metadata.get("na", 0.75))
+    target_m = float(objective.metadata.get("magnification", 20.0))
+
+    report.add(check_infinity_space(bench, INF_SPECIMEN_S, "objective"))
+    report.add(
+        check_image_lands_on_detector(
+            bench, INF_SPECIMEN_S, "sensor",
+            image_side_depth_of_focus_mm(0.5461, na, target_m),
+        )
+    )
+    report.add(
+        check_magnification(bench, INF_SPECIMEN_S, "sensor", target_m, MAGNIFICATION_TOLERANCE)
+    )
+    # The round's real point: the filter must cost nothing.
+    report.add(check_filter_is_focus_neutral(bench, INF_SPECIMEN_S, "sensor", "filter"))
+    return report
+
+
+ROUND_11 = Round(
+    number=11,
+    title="Infinity correction",
+    brief=(
+        "Rebuild the scope with no tube length at all. Put the specimen at the "
+        "objective's front focal plane, add a 200 mm tube lens, and drop a 5 mm "
+        "filter into the space between them without refocusing."
+    ),
+    teaches=(
+        "that an infinity space is collimated, so its length is free and a plate "
+        "inserted in it does not shift focus"
+    ),
+    s_object=INF_SPECIMEN_S,
+    wavelength_um=0.5461,
+    evaluate=_round11_evaluate,
+    reference_build=_infinity_stand,
+    parts_budget=5,
+    available_kinds=("objective", "tube_lens", "filter", "detector", "field_stop"),
+    notes=(
+        "M = f_tube / f_objective, and it does not depend on the separation. A plate "
+        "of thickness t and index n shifts focus by t(1 - 1/n) in converging light "
+        "and by nothing at all in collimated light -- that difference is why the "
+        "whole industry moved to infinity optics."
+    ),
+)
+
+
+TURRET = (
+    ("objective_10x", 10.0, 0.45),
+    ("objective_20x", 20.0, 0.75),
+    ("objective_40x", 40.0, 0.95),
+)
+
+
+def _full_stand() -> Bench:
+    """A CFI60 stand with a three-objective parfocal turret and both light paths."""
+    elements = [
+        BenchElement("specimen", INF_SPECIMEN_S, "field_stop", 12.0, label="specimen"),
+        BenchElement("filter", INF_FILTER_S, "filter", 12.5, None, label="5 mm filter",
+                     metadata={"thickness_mm": FILTER_THICKNESS_MM, "index": FILTER_INDEX}),
+        BenchElement("tube_lens", INF_TUBE_LENS_S, "tube_lens", 13.0, CFI_TUBE_F,
+                     label="CFI tube lens"),
+        BenchElement("sensor", INF_TUBE_LENS_S + CFI_TUBE_F, "detector", 11.0, label="sensor"),
+    ]
+    for name, magnification, na in TURRET:
+        f = CFI_TUBE_F / magnification
+        elements.append(
+            BenchElement(
+                name, INF_SPECIMEN_S + f, "objective", 6.0, f,
+                label=f"CFI {magnification:.0f}x/{na}",
+                # Only the first position is in the light path; the others are
+                # fitted but swung out, exactly as on a real turret.
+                enabled=(name == TURRET[0][0]),
+                metadata={"na": na, "magnification": magnification,
+                          "parfocal_mm": CFI_PARFOCAL, "in_turret": True},
+            )
+        )
+    return Bench(elements)
+
+
+def _stand_with_objective(bench: Bench, keep: str) -> Bench:
+    """The stand as it is with one objective rotated into the light path."""
+    return Bench(
+        [
+            dataclasses.replace(e, enabled=(e.name == keep))
+            if e.metadata.get("in_turret") else e
+            for e in bench.elements
+        ],
+        bench.folds, tuple(bench.origin), tuple(bench.initial_direction),
+        list(bench.arms.values()),
+    )
+
+
+def _round12_evaluate(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    turret = [e.name for e in bench.elements if e.metadata.get("in_turret")]
+    report.add(check_parfocality(bench, turret, CFI_PARFOCAL))
+
+    # Every objective in the turret must work without moving anything else.
+    for name in turret:
+        single = _stand_with_objective(bench, name)
+        objective = bench.get(name)
+        na = float(objective.metadata.get("na", 0.5))
+        magnification = float(objective.metadata.get("magnification", 1.0))
+
+        focus = check_image_lands_on_detector(
+            single, INF_SPECIMEN_S, "sensor",
+            image_side_depth_of_focus_mm(0.5461, na, magnification),
+        )
+        report.add(dataclasses.replace(focus, name=f"Focus [{magnification:.0f}x]"))
+
+        mag = check_magnification(
+            single, INF_SPECIMEN_S, "sensor", magnification, MAGNIFICATION_TOLERANCE
+        )
+        report.add(dataclasses.replace(mag, name=f"Magnification [{magnification:.0f}x]"))
+
+        infinity = check_infinity_space(single, INF_SPECIMEN_S, name)
+        report.add(dataclasses.replace(infinity, name=f"Infinity space [{magnification:.0f}x]"))
+
+    report.add(
+        check_filter_is_focus_neutral(
+            _stand_with_objective(bench, turret[0]), INF_SPECIMEN_S, "sensor", "filter"
+        )
+    )
+    return report
+
+
+ROUND_12 = Round(
+    number=12,
+    title="The full stand",
+    brief=(
+        "Fit a three-objective parfocal turret to the infinity stand. Rotating "
+        "between 10x, 20x and 40x must keep focus, keep the sensor where it is, "
+        "and give the magnification on the label."
+    ),
+    teaches="that parfocality is a mechanical promise the optics have to honour",
+    s_object=INF_SPECIMEN_S,
+    wavelength_um=0.5461,
+    evaluate=_round12_evaluate,
+    reference_build=_full_stand,
+    parts_budget=8,
+    available_kinds=("objective", "tube_lens", "filter", "detector", "field_stop"),
+    notes=(
+        "Every objective in a matched set has the same shoulder-to-specimen "
+        "distance -- 60 mm for CFI60 -- so a 10x sitting 20 mm above the specimen "
+        "and a 40x sitting 5 mm above it still focus together. Mixing series breaks it."
+    ),
+)
+
+
+# --- sandbox -----------------------------------------------------------------
+
+
+def _sandbox_evaluate(bench: Bench) -> RuleReport:
+    """Diagnostics, not a verdict.
+
+    The sandbox reports what the build is doing without grading it: where the image
+    lands, what the stop is, what NA you have, what it can resolve. Nothing fails,
+    because there is no brief to fail against -- which is the point of a sandbox.
+    """
+    from ..rules.base import RuleResult, Status
+
+    report = RuleReport()
+    system = bench.to_paraxial()
+    s_object = min([e.s for e in bench.elements if e.arm == "main"] or [0.0])
+    image_s = system.image_plane(s_object)
+    stop = system.aperture_stop(s_object)
+    na = system.object_space_na(s_object)
+
+    report.add(
+        RuleResult(
+            "Image plane", Status.NOT_APPLICABLE,
+            "output is collimated (afocal)" if image_s is None
+            else f"image forms at s = {image_s:.2f} mm",
+            equation="B = 0 of the object-to-image matrix",
+            measured=image_s,
+        )
+    )
+    if image_s is not None:
+        report.add(
+            RuleResult(
+                "Magnification", Status.NOT_APPLICABLE,
+                f"{abs(system.magnification(s_object, image_s)):.3f}x",
+                equation="M = A of the object-to-image matrix",
+            )
+        )
+    report.add(
+        RuleResult(
+            "Aperture stop", Status.NOT_APPLICABLE,
+            stop.name if stop else "none: nothing limits the bundle",
+            equation="smallest ratio of clear aperture to ray height",
+        )
+    )
+    if na > 0:
+        report.add(
+            RuleResult(
+                "Numerical aperture", Status.NOT_APPLICABLE,
+                f"NA {na:.3f}, resolving {abs(0.5461 / na):.3f} um at best",
+                equation=f"NA = n sin(u) = {na:.3f}; d = lambda / NA",
+                measured=na,
+            )
+        )
+    return report
+
+
+SANDBOX = Round(
+    number=0,
+    title="Sandbox",
+    brief="No brief. Build whatever you like; the panel reports what it does.",
+    teaches="whatever you decide to try",
+    s_object=0.0,
+    wavelength_um=0.5461,
+    evaluate=_sandbox_evaluate,
+    reference_build=_infinity_stand,
+    parts_budget=99,
+    notes="Unlocks alongside round 5. Nothing here passes or fails.",
+)
+
 
 def get_round(number: int) -> Round:
     if number not in ROUNDS:
@@ -680,5 +944,8 @@ def get_round(number: int) -> Round:
 
 ROUNDS: dict[int, Round] = {
     r.number: r
-    for r in (ROUND_1, ROUND_2, ROUND_3, ROUND_4, ROUND_5, ROUND_9, ROUND_10)
+    for r in (
+        ROUND_1, ROUND_2, ROUND_3, ROUND_4, ROUND_5,
+        ROUND_9, ROUND_10, ROUND_11, ROUND_12, SANDBOX,
+    )
 }

@@ -8,12 +8,31 @@ such in the UI rather than presented as a datasheet value.
 
 from __future__ import annotations
 
+import sys
 import tomllib
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-CATALOG_PATH = Path(__file__).resolve().parent.parent / "assets" / "components.toml"
+def _catalog_path() -> Path:
+    """Locate the catalog, whether running from source or from a frozen build.
+
+    PyInstaller unpacks bundled data to a temporary directory and points
+    ``sys._MEIPASS`` at it, so a path derived from ``__file__`` alone breaks in the
+    packaged executable.
+    """
+    bundled = getattr(sys, "_MEIPASS", None)
+    if bundled:
+        candidate = Path(bundled) / "microscopevuilder" / "assets" / "components.toml"
+        if candidate.exists():
+            return candidate
+        candidate = Path(bundled) / "assets" / "components.toml"
+        if candidate.exists():
+            return candidate
+    return Path(__file__).resolve().parent.parent / "assets" / "components.toml"
+
+
+CATALOG_PATH = _catalog_path()
 
 
 @dataclass(frozen=True)

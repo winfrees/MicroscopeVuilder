@@ -135,6 +135,11 @@ def build_trace_model(
     rays.extend(_illumination_rays(bench, system, s_object))
 
     image_s = system.image_plane(s_object)
+    if image_s is not None and image_s < s_object:
+        # A virtual image, or a build the trace cannot make sense of. Either way
+        # there is nothing to draw downstream, and asking for a magnification
+        # across a backwards interval would raise.
+        image_s = None
     magnification = (
         system.magnification(s_object, image_s) if image_s is not None else None
     )

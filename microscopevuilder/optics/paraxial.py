@@ -87,6 +87,36 @@ def transfer(d: float) -> np.ndarray:
     return np.array([[1.0, d], [0.0, 1.0]])
 
 
+def glass_plate(
+    name: str, s: float, thickness_mm: float, index: float, semi_diameter: float,
+    kind: str = "filter",
+) -> Element:
+    """A plane-parallel plate: a filter, a dichroic substrate, a coverslip.
+
+    A plate of thickness ``t`` and index ``n`` replaces ``t`` of air with ``t`` of
+    glass, and light inside it advances by the *reduced* thickness ``t/n``. Relative
+    to the air it displaced, the plate therefore contributes ``transfer(t/n - t)``,
+    a negative distance, and the image moves downstream by ``t(1 - 1/n)``.
+
+    This is the element that makes infinity correction demonstrable rather than
+    asserted. In converging light a plate shifts focus; in collimated light it does
+    nothing at all, because a ray ``(y, 0)`` is unchanged by any transfer. That
+    difference is the entire practical argument for an infinity space, and round 11
+    turns on it.
+    """
+    if index <= 0:
+        raise ValueError(f"{name}: refractive index must be positive")
+    if thickness_mm < 0:
+        raise ValueError(f"{name}: thickness cannot be negative")
+    reduced = thickness_mm / index - thickness_mm
+    return Element(name, s, semi_diameter, transfer(reduced), kind)
+
+
+def focus_shift_from_plate(thickness_mm: float, index: float) -> float:
+    """How far a plate displaces focus in converging light: ``t (1 - 1/n)``."""
+    return thickness_mm * (1.0 - 1.0 / index)
+
+
 # --- system ------------------------------------------------------------------
 
 
