@@ -265,17 +265,64 @@ Where practical, compare a few benches against a published prescription.
 | M6 | Derived tolerances | **Done**: every focus tolerance traces to the Rayleigh quarter-wave criterion and is validated against the PSF engine; pupil conjugates use a separate geometric criterion |
 | M7 | Epi + fluorescence on **branched** benches | **Done**: rounds 9–10; the bench gained arms, since an epi path is a second path, not a folded one |
 | M8 | Infinity correction, parfocal turret, sandbox | **Done**: rounds 11–12; a glass-plate element makes the infinity-space argument demonstrable, and the bench gained enabled/disabled elements so a turret traces one objective |
-| M8b | Complex-amplitude contrast: phase, polarization, DIC | Rounds 13–15 |
+| M8b | Complex-amplitude contrast: phase, polarization, DIC | **Open**: rounds 13–15. Engine groundwork is done — complex amplitude works and a 0.2 rad phase object is verifiably invisible in brightfield. Needs `optics/jones.py`, phase ring/annulus at the objective BFP, Wollaston shear |
 | M9 | Packaging: one-file executables, published to Releases | **Done**: PyInstaller one-file per platform, built and smoke-tested in CI, attached to a GitHub Release on `v*` tags. Unsigned — noted in the release body |
+| **M10** | **Close the testing loop on the real bench** | The generated image is an image *of the player's build*: catalog aberration budgets, magnification, field height and photometry all feed synthesis, and measured image metrics feed the scorecard |
+| **M11** | Rounds 6–8: colour, flat field, camera port | Depends on M10 — these are graded on image measurements, not ray geometry |
+| **M12** | Game shell: parts bin, scoring, progress, specimen library | A player can lose a round on budget, see a star rating, diff against a working build, and resume where they left off |
+| **M13** | Verification and polish | Catalog entries datasheet-checked, ribbon playtested, onboarding and art pass |
 
-**Highest-risk items, front-loaded**: (a) partial-coherence image synthesis (Hopkins TCC)
-that is both physically defensible and fast enough — prototype in M2; the documented
-fallback is an incoherent-PSF approximation, but note that decision 4 makes this harder
-to give up, since phase contrast *requires* complex amplitude; (b) making conjugate
-planes *visible* enough that Köhler is a puzzle rather than a guessing game — prototype
-the ribbon UI in M4 and playtest before building rounds on it; (c) sourcing defensible
-aberration budgets for the component catalog (§2.2) — these are the numbers a graduate
-student will check against their own bench, so each gets a cited source.
+**Recommended order: M10 → M11 → M8b → M12 → M13.** M10 unblocks M11 (see below) and
+supplies the metrics M12's scoring depends on. M8b sits after M11 because phase contrast
+and DIC are the most demanding consumers of the synthesis path M10 builds.
+
+### M10 — close the testing loop (the one real gap in what exists)
+
+Pillar 2 says a configuration wins because the generated image satisfies the spec. It
+does not yet. `ImageWorker` takes four scalars — NA, wavelength, coherence parameter,
+specimen kind — and synthesises a generic image. It ignores the bench's magnification,
+field height and aberrations, and it ignores the round's specimen. The image on screen
+is *about* your NA, not *of* your build, and the scorecard grades ray geometry only.
+
+Specifically unwired today:
+
+- **`budget_at_field()` and the entire catalog aberration budget** (§2.2) are written
+  and tested but **called by nothing**. A plan objective and a non-plan objective
+  currently produce identical images, which makes the catalog's central teaching
+  distinction invisible.
+- **`imaging/metrics.py` does not exist.** No measured MTF, field uniformity, resolved
+  line-pairs or chromatic error feeds the scorecard, so the rendered image is
+  decorative rather than evidential.
+- **Photometry** (relative irradiance ∝ NA²/M², vignetting, sensor response and noise)
+  exists only inside round 3's throughput rule, not in synthesis.
+
+This is sequenced **before** rounds 6–8 deliberately: "chromatic error under tolerance"
+and "corner MTF within spec" are image measurements. Those rounds cannot be graded
+honestly until the loop is closed, and building them first would mean grading them on
+proxies and rewriting them later.
+
+### M12 — game shell (planned in §3, never built)
+
+- **Parts bin and budget.** `parts_budget` is carried on every round and enforced
+  nowhere, so the "cheap correct solution beats brute force" pillar has no teeth.
+- **Star rating and the diff view.** §3 promises a rating from the metrics and a diff
+  against the reference build after one failure. `reference_build` exists for every
+  round; the diff view does not. The rating depends on M10's metrics.
+- **Progress and saves.** `platformdirs` is a declared dependency and is never
+  imported. Benches serialise to JSON, but player progress does not persist at all.
+- **Specimen library.** Two hardcoded specimens against the eight in §3 (USAF 1951,
+  Siemens star, diatom, stained section, beads, phase object, polished metal, Ronchi).
+
+### Risk register
+
+| Risk | State |
+|---|---|
+| Partial-coherence synthesis defensible and fast enough | **Closed.** Abbe source integration, not Hopkins TCC; ~0.3 s at 384². The incoherent-PSF fallback is now unavailable anyway, since decision 4 needs complex amplitude |
+| Conjugate ribbon makes Köhler legible *to a person* | **Open, and unanswerable from code.** It renders, and tests confirm numerically that field and aperture planes interleave — but legibility needs a human. Playtest before rounds 13–15 lean on it further (M13) |
+| Aberration budgets a student will check against their own bench | **Partly open.** Provenance tracking and the UI disclaimer are built; 11 catalog entries remain `verified = false`, i.e. written from recall and not yet datasheet-checked (M13). The Zernike budgets stay `pedagogical` permanently and by design |
+| Frozen-build portability | **Closed by building locally**: PyInstaller ≥ 6.22 for numpy 2.4, xcb libraries present at build time, oldest-supported Linux runner |
+| Unsigned macOS and Windows binaries | **Open by choice.** First launch needs Right-click → Open or "Run anyway"; stated in the release body and README. Signing needs an Apple Developer ID and a Windows certificate — a cost decision, not a technical one |
+| 3D view | **Deferred by design** (decision 3). The bench is 3D-native and the renderer sits behind a protocol, so this stays a second renderer rather than a rewrite |
 
 ---
 
