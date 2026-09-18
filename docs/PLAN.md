@@ -83,9 +83,20 @@ NA by the standard Seidel dependences, plus a chromatic term.
 - **Coherent transfer**: pupil function `P = A * exp(i*2*pi*W/lambda)`, amplitude PSF by FFT,
   incoherent PSF = `|h|^2`, OTF by autocorrelation of `P`.
 - **Partial coherence**: condenser-to-objective NA ratio `S = NA_cond / NA_obj` sets the
-  illumination pupil fill. Use the Hopkins transmission cross-coefficient formulation,
-  precomputed on a coarse source grid; at `S -> 0` it degrades to coherent imaging and at
-  `S >= 1` to incoherent, both of which are cheap analytic checks for the test suite.
+  illumination pupil fill. Implemented by **Abbe source integration, not Hopkins TCC**:
+  each condenser-pupil point contributes one coherent image and the intensities sum.
+  Abbe costs `N_source` FFTs and `O(n^2)` memory against the TCC's `O(n^4)`, and the TCC
+  only amortizes when many specimens pass through one fixed system — the opposite of
+  this game. Abbe is also exact for a spatially incoherent Köhler source rather than an
+  approximation of it.
+  The verified result: the partially coherent cutoff is `(1 + S) NA / lambda`, so `S = 1`
+  reaches the full incoherent `2 NA / lambda` and `S -> 0` gives half that. Two
+  corrections to earlier assumptions, both now pinned by tests:
+  (a) `S > 1` is *not* "more incoherent" — source points outside the objective pupil
+  contribute no undiffracted background, so the build slides toward darkfield and the
+  image never converges to the incoherent convolution;
+  (b) source shifts are applied by `np.roll`, which wraps, so an oversized source
+  silently folds high frequencies back into the passband. It now raises instead.
 - **Complex amplitude throughout** (decision 4): the specimen is a complex transmittance
   `t = A * exp(i*phi)`, so a pure phase object is genuinely invisible in brightfield and
   becomes visible only once the player puts a phase ring in the objective back focal
@@ -194,9 +205,11 @@ tests/          golden optical cases, rule tests, round-solvability tests
   Everything in `optics/`, `rules/`, `imaging/` is importable and testable headless.
 - Determinism: fixed seeds for noise so scores are reproducible.
 
-**Performance**: paraxial + rule pass targets <5 ms (interactive, every drag). Real-ray
-and PSF synthesis run on a worker thread with a progress indicator; 512² FFT convolution
-is well under a second.
+**Performance**: paraxial + rule pass targets <5 ms (interactive, every drag). PSF and
+partially coherent synthesis run on a worker thread with a progress indicator. Measured:
+a 384² Abbe integration over ~200 source points takes ~0.3 s, so the testing loop is
+responsive but the workspace must not attempt it on every drag — the paraxial pass and
+rule report carry the live UI, and image synthesis is triggered by **Run**.
 
 **Validation**: golden tests against textbook cases (thin-lens conjugates, known
 Cooke-triplet spot sizes, Airy radius `0.61λ/NA`, Abbe limit) with numeric tolerances.
@@ -224,7 +237,7 @@ Where practical, compare a few benches against a published prescription.
 | M0 | Repo scaffold, CI, test harness | `pytest` green on 3 OSes |
 | M1 | `optics/` paraxial ABCD, stops/pupils, 3D folding | Golden tests pass |
 | M2 | `optics/` wavefront + PSF/OTF + CFI60 catalog | **Done for the incoherent path**: Airy zero, 84% encircled energy, analytic MTF, quarter-wave Strehl all reproduce |
-| M2b | Partial coherence (Hopkins TCC) | S->0 and S>=1 limits match the coherent/incoherent analytics |
+| M2b | Partial coherence (Abbe source integration) | **Done**: S->0 matches the coherent formula to 1e-12; the `(1+S) NA/lambda` cutoff holds at S = 0, 0.5, 1; a 0.2 rad phase object is invisible in brightfield |
 | M3 | Headless round 1–2 solvable via script | Solver test passes |
 | M4 | Qt workspace: drag, ray overlay, inspector | Playable round 2 |
 | M5 | Testing loop, scorecard, conjugate ribbon | Rounds 1–5 |
