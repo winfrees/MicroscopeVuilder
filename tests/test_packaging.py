@@ -53,6 +53,35 @@ def test_the_spec_builds_one_file_not_a_directory():
     assert "a.binaries" in spec and "a.datas" in spec  # folded into the EXE
 
 
+def test_a_scarce_runner_cannot_block_the_release():
+    # The first run of this workflow sat queued on the Intel macOS runner for over
+    # fifteen minutes while every other platform finished, and timeout-minutes does
+    # not apply while a job waits for a runner. Intel therefore builds outside the
+    # critical path and attaches to the release afterwards.
+    workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "build-macos-intel:" in workflow
+    assert "continue-on-error: true" in workflow
+
+    import yaml
+
+    spec = yaml.safe_load(workflow)
+    assert spec["jobs"]["publish"]["needs"] == "build"
+    blocking = {m["label"] for m in spec["jobs"]["build"]["strategy"]["matrix"]["include"]}
+    assert "macos-x86_64" not in blocking
+    assert blocking == {"linux-x86_64", "windows-x86_64", "macos-arm64"}
+
+
+def test_the_intel_build_attaches_to_the_same_release():
+    import yaml
+
+    workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    spec = yaml.safe_load(workflow)
+    steps = spec["jobs"]["build-macos-intel"]["steps"]
+    assert any("softprops/action-gh-release" in str(step.get("uses", "")) for step in steps)
+    # Same tag scheme as the main publisher, or it would attach to nothing.
+    assert "build-${GITHUB_RUN_NUMBER}" in workflow
+
+
 def test_release_workflow_publishes_executables_for_every_platform():
     workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     for asset in (
