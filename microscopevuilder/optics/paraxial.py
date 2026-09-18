@@ -63,6 +63,12 @@ class Element:
         if self.semi_diameter <= 0:
             raise ValueError(f"{self.name}: semi_diameter must be positive")
 
+    @property
+    def focal_length(self) -> float | None:
+        """Focal length implied by the element's ABCD, or None for a plane."""
+        c = self.matrix[1, 0]
+        return None if c == 0 else -1.0 / c
+
 
 def thin_lens(name: str, s: float, f: float, semi_diameter: float, kind: str = "lens") -> Element:
     """An ideal thin lens of focal length ``f`` mm."""

@@ -18,10 +18,15 @@ from ..rules.base import RuleReport
 
 @dataclass
 class TracedRay:
-    """A ray sampled along the bench, as (s, height) pairs."""
+    """A ray sampled along the bench, as (s, height) pairs.
+
+    ``arm`` names which path the samples are measured along, so the renderer knows
+    whether to place them on the main axis or on a branch.
+    """
 
     label: str
     samples: list[tuple[float, float]] = field(default_factory=list)
+    arm: str = "main"
 
 
 @dataclass
@@ -34,23 +39,38 @@ class ConjugatePlane:
 
 
 def _illumination_rays(bench: Bench, system, s_object: float) -> list[TracedRay]:
-    """Rays from the lamp, if this bench has one."""
+    """Rays from the lamp, if this bench has one.
+
+    On a branched bench the lamp sits on an arm, so the trace runs along that arm's
+    own system and coordinates.
+    """
     lamps = [e for e in bench.elements if e.kind == "lamp"]
     if not lamps:
         return []
     lamp = lamps[0]
+    arm = lamp.arm
+    if arm != "main":
+        system = bench.to_paraxial(arm)
+        elements = [e for e in bench.elements if e.arm == arm]
+        junction = bench.arms[arm].length_mm
+        downstream = sorted({lamp.s, *(e.s for e in elements), junction})
+        return _rays_from(system, lamp, downstream, arm)
 
     downstream = sorted({lamp.s, *(e.s for e in bench.elements if e.s >= lamp.s)})
     tail = (max(downstream) - min(downstream)) * 0.08 or 10.0
     downstream.append(max(downstream) + tail)
+    return _rays_from(system, lamp, downstream, "main")
 
+
+def _rays_from(system, lamp, stops: list[float], arm: str) -> list[TracedRay]:
     out: list[TracedRay] = []
     axial = system.marginal_ray(lamp.s)
     if axial is not None:
         out.append(
             TracedRay(
                 "illumination_axial",
-                [(s, system.trace(axial, lamp.s, s).y) for s in downstream],
+                [(s, system.trace(axial, lamp.s, s).y) for s in stops],
+                arm,
             )
         )
     edge = system.chief_ray(lamp.s, lamp.semi_diameter_mm)
@@ -58,7 +78,8 @@ def _illumination_rays(bench: Bench, system, s_object: float) -> list[TracedRay]
         out.append(
             TracedRay(
                 "illumination_edge",
-                [(s, system.trace(edge, lamp.s, s).y) for s in downstream],
+                [(s, system.trace(edge, lamp.s, s).y) for s in stops],
+                arm,
             )
         )
     return out

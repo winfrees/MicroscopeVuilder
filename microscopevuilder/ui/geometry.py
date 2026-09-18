@@ -38,6 +38,17 @@ def axis_frame(bench: Bench, s: float, eps: float = 1e-4) -> tuple[np.ndarray, n
     return here, tangent, normal
 
 
+def arm_axis_frame(bench: Bench, arm: str, s: float, eps: float = 1e-4):
+    """Point, tangent and normal along a side arm, in scene coordinates."""
+    here = project(bench.position_of_arm(arm, s))
+    ahead = project(bench.position_of_arm(arm, s + eps))
+    tangent = ahead - here
+    norm = np.linalg.norm(tangent)
+    tangent = tangent / norm if norm else np.array([1.0, 0.0])
+    normal = np.array([-tangent[1], tangent[0]])
+    return here, tangent, normal
+
+
 def point_at(bench: Bench, s: float, height_mm: float) -> np.ndarray:
     """Scene position of a ray at path ``s`` and transverse height ``height_mm``."""
     here, _, normal = axis_frame(bench, s)

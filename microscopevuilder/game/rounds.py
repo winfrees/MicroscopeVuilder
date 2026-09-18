@@ -8,10 +8,11 @@ reference solution, used only to prove the round is solvable and to power the
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Callable
 
-from ..bench.bench import Bench, BenchElement
+from ..bench.bench import Arm, Bench, BenchElement
 from ..rules.base import RuleReport
 from ..rules.tolerances import (
     MAGNIFICATION_TOLERANCE,
@@ -24,6 +25,9 @@ from ..rules.checks import (
     check_condenser_na_match,
     check_conjugate,
     check_conjugate_to_plane,
+    check_epi_separation,
+    check_filter_set,
+    check_stokes_shift,
     check_illumination_throughput,
     check_illumination_uniformity,
     check_image_lands_on_detector,
@@ -481,12 +485,200 @@ ROUND_5 = Round(
 )
 
 
-ROUNDS: dict[int, Round] = {
-    r.number: r for r in (ROUND_1, ROUND_2, ROUND_3, ROUND_4, ROUND_5)
-}
+
+# --- rounds 9-10: episcopic illumination and fluorescence --------------------
+#
+# The first branched bench. Epi illumination is not a folded path but a second
+# path: it enters at the beamsplitter, runs BACK down through the objective to the
+# specimen, and the returning light comes up the same way. The objective is its own
+# condenser, which is the whole idea.
+#
+# Geometry solved against the engine, not by hand:
+#   objective at the DIN working distance from the specimen
+#   epi lens images the lamp onto the objective back focal plane   (aperture set)
+#   field diaphragm images onto the specimen                        (field set)
+
+EPI_F_OBJ = 16.0
+EPI_SPECIMEN_S = 0.0
+EPI_OBJECTIVE_S = 1.0 / (1.0 / EPI_F_OBJ - 1.0 / (EPI_F_OBJ + OPTICAL_TUBE_LENGTH_MM))
+EPI_JUNCTION_S = 60.0
+EPI_IMAGE_S = EPI_OBJECTIVE_S + EPI_F_OBJ + OPTICAL_TUBE_LENGTH_MM
+EPI_ARM_LENGTH = 120.0
+EPI_LENS_F = 30.0
+EPI_LENS_S = 42.116          # images the lamp onto the back focal plane
+EPI_FIELD_DIAPHRAGM_S = 22.615  # images onto the specimen through the objective
+
+
+def _epi_arm_coordinate(main_s: float) -> float:
+    return EPI_ARM_LENGTH + (EPI_JUNCTION_S - main_s)
+
+
+def _epi_stand(
+    epi_lens_s: float = EPI_LENS_S,
+    field_diaphragm_s: float = EPI_FIELD_DIAPHRAGM_S,
+    objective_na: float = 0.25,
+    aperture_semi_mm: float = 4.0,
+) -> Bench:
+    return Bench(
+        [
+            BenchElement("specimen", EPI_SPECIMEN_S, "field_stop", 12.0, label="specimen"),
+            BenchElement("objective", EPI_OBJECTIVE_S, "objective", 4.0, EPI_F_OBJ,
+                         label=f"objective NA {objective_na}", metadata={"na": objective_na}),
+            BenchElement("beamsplitter", EPI_JUNCTION_S, "beamsplitter", 12.0,
+                         label="vertical illuminator"),
+            BenchElement("intermediate_image", EPI_IMAGE_S, "field_stop", 11.0,
+                         label="intermediate image"),
+            BenchElement("lamp", 0.0, "lamp", 2.0, None, label="epi lamp", arm="epi"),
+            BenchElement("field_diaphragm", field_diaphragm_s, "diaphragm", 6.0, None,
+                         label="field diaphragm", arm="epi"),
+            BenchElement("epi_lens", epi_lens_s, "lens", 12.0, EPI_LENS_F,
+                         label="epi collector", arm="epi"),
+            BenchElement("aperture_diaphragm", epi_lens_s + 1.0, "diaphragm",
+                         aperture_semi_mm, None, label="aperture diaphragm", arm="epi"),
+        ],
+        arms=[Arm("epi", EPI_JUNCTION_S, EPI_ARM_LENGTH, (1.0, 0.0, 0.0), continues="reverse")],
+    )
+
+
+def _round9_evaluate(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    objective = bench.get("objective")
+    bfp_arm_s = _epi_arm_coordinate(objective.s) - (objective.focal_length_mm or 0.0)
+    specimen_arm_s = _epi_arm_coordinate(bench.get("specimen").s)
+
+    report.add(check_epi_separation(bench, "beamsplitter", "objective"))
+    report.add(
+        _epi_conjugate(bench, bench.get("lamp").s, bfp_arm_s,
+                       "Lamp on back focal plane", "the objective back focal plane",
+                       pupil_conjugate_tolerance_mm(objective.semi_diameter_mm, 0.25),
+                       "the epi lamp")
+    )
+    report.add(
+        _epi_conjugate(bench, bench.get("field_diaphragm").s, specimen_arm_s,
+                       "Field diaphragm on specimen", "the specimen",
+                       field_conjugate_tolerance_mm(0.5461, 0.25), "the field diaphragm")
+    )
+    report.add(
+        check_image_lands_on_detector(
+            bench, EPI_SPECIMEN_S, "intermediate_image",
+            image_side_depth_of_focus_mm(0.5461, 0.25, 10.0),
+        )
+    )
+    return report
+
+
+def _epi_conjugate(bench, s_from, s_target, label, target_label, tolerance, from_label):
+    """check_conjugate_to_plane against the epi arm rather than the main axis."""
+    from ..rules.base import Status, tolerance_result
+
+    system = bench.to_paraxial("epi")
+    s_img = system.image_plane(s_from, search_to=s_target + 1e-6)
+    if s_img is None:
+        from ..rules.base import RuleResult
+
+        return RuleResult(
+            name=label, status=Status.FAIL,
+            summary=f"{from_label} is not imaged onto {target_label}",
+            equation=f"no finite conjugate before {target_label} (arm s = {s_target:.2f} mm)",
+            remedy="refocus the epi collector",
+        )
+    return tolerance_result(
+        name=label, measured=s_img, target=s_target, tolerance=tolerance, units="mm",
+        equation=(
+            f"along the epi arm, the conjugate of {from_label} lands at "
+            f"s = {s_img:.2f} mm; {target_label} is at s = {s_target:.2f} mm"
+        ),
+        remedy=f"move the epi collector so the conjugate falls on {target_label}",
+        relative=False,
+    )
+
+
+ROUND_9 = Round(
+    number=9,
+    title="Episcopic illumination",
+    brief=(
+        "Light an opaque specimen from above. The objective is its own condenser: "
+        "send the illumination in at the beamsplitter, back down through the "
+        "objective, and image the field diaphragm onto the specimen."
+    ),
+    teaches="that an epi path is a second light path sharing the objective, not a folded one",
+    s_object=EPI_SPECIMEN_S,
+    wavelength_um=0.5461,
+    evaluate=_round9_evaluate,
+    reference_build=_epi_stand,
+    parts_budget=8,
+    available_kinds=("lamp", "lens", "diaphragm", "beamsplitter", "objective", "field_stop"),
+    notes=(
+        "Köhler still applies, with the objective back focal plane standing in for "
+        "the condenser's: the lamp goes to the aperture set, the field diaphragm to "
+        "the field set. Only now both sets live on a branch of the bench."
+    ),
+)
+
+
+def _round10_evaluate(bench: Bench) -> RuleReport:
+    from ..optics.spectra import CUBES, FLUOROPHORES
+
+    report = RuleReport()
+    cube = CUBES[bench.get("beamsplitter").metadata.get("cube", "fitc")]
+    dye = FLUOROPHORES[bench.get("specimen").metadata.get("fluorophore", "fitc")]
+
+    report.add(check_stokes_shift(dye, cube))
+    report.add(check_filter_set(cube, dye))
+    report.add(check_epi_separation(bench, "beamsplitter", "objective"))
+    report.add(
+        _epi_conjugate(
+            bench, bench.get("field_diaphragm").s,
+            _epi_arm_coordinate(bench.get("specimen").s),
+            "Field diaphragm on specimen", "the specimen",
+            field_conjugate_tolerance_mm(0.5461, 0.25), "the field diaphragm",
+        )
+    )
+    return report
+
+
+def _round10_reference() -> Bench:
+    bench = _epi_stand(objective_na=0.75)
+    bench.elements = [
+        dataclasses.replace(e, metadata={**e.metadata, "cube": "fitc"})
+        if e.name == "beamsplitter"
+        else dataclasses.replace(e, metadata={**e.metadata, "fluorophore": "fitc"})
+        if e.name == "specimen"
+        else e
+        for e in bench.elements
+    ]
+    return bench
+
+
+ROUND_10 = Round(
+    number=10,
+    title="Epi-fluorescence",
+    brief=(
+        "Swap the beamsplitter for a dichroic filter cube and image a FITC-labelled "
+        "specimen. Excitation must reach the dye; emission must reach the eye; "
+        "excitation must not."
+    ),
+    teaches="that the Stokes shift is what makes fluorescence separable from its own illumination",
+    s_object=EPI_SPECIMEN_S,
+    wavelength_um=0.519,  # FITC emission
+    evaluate=_round10_evaluate,
+    reference_build=_round10_reference,
+    parts_budget=8,
+    available_kinds=("lamp", "lens", "diaphragm", "dichroic", "objective", "field_stop"),
+    notes=(
+        "Excitation is orders of magnitude brighter than emission, so a few percent "
+        "of bleedthrough is the difference between a black background and a grey haze."
+    ),
+)
 
 
 def get_round(number: int) -> Round:
     if number not in ROUNDS:
         raise KeyError(f"round {number} is not implemented yet; have {sorted(ROUNDS)}")
     return ROUNDS[number]
+
+
+ROUNDS: dict[int, Round] = {
+    r.number: r
+    for r in (ROUND_1, ROUND_2, ROUND_3, ROUND_4, ROUND_5, ROUND_9, ROUND_10)
+}

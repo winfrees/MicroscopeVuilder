@@ -179,8 +179,8 @@ about four of them at once.
 | 6 | Color | Achromat vs apochromat, lateral color, filters | Chromatic error under tolerance |
 | 7 | Flat field | Field curvature, plan objectives, sensor size | Corner MTF within spec |
 | 8 | Camera port | Beamsplitter, C-mount, Nyquist sampling | Sampled, not empty-magnified |
-| 9 | Episcopic | Vertical illuminator, epi-brightfield, folded axis | Reflected-light image of opaque metal |
-| 10 | Fluorescence | Dichroic, excitation/emission, stray light | Signal/background above threshold |
+| 9 | Episcopic | Vertical illuminator, epi-brightfield, branched axis, objective as its own condenser | Epi-Köhler: lamp on the objective back focal plane, field diaphragm on the specimen |
+| 10 | Fluorescence | Dichroic, Stokes shift, excitation/emission bands, bleedthrough | Correct cube for the dye, and bleedthrough below threshold |
 | 11 | Infinity | Remove tube length, infinity space, tube lens | Same M, and inserting a filter in infinity space doesn't shift focus |
 | 12 | Full stand | Combined dia + epi, turret parfocality | All rules green across three objectives |
 | 13 | Phase contrast | Phase annulus + ring conjugate to the objective BFP, phase object | Unstained cell visible; halo artifact understood |
@@ -257,7 +257,7 @@ Where practical, compare a few benches against a published prescription.
 | M4 | Qt workspace: drag, ray overlay, inspector, conjugate ribbon, Run loop | **Done**: `python -m microscopevuilder --ui --round N`; headless Qt tests cover drag, retrace, scorecard and worker thread |
 | M5 | Illumination rounds, conjugacy rules, illumination ray path | **Done**: rounds 3–5 with the four-plane Köhler check, throughput, condenser NA matching |
 | M6 | Derived tolerances | **Done**: every focus tolerance traces to the Rayleigh quarter-wave criterion and is validated against the PSF engine; pupil conjugates use a separate geometric criterion |
-| M7 | Epi + fluorescence, folded benches | Rounds 9–10 |
+| M7 | Epi + fluorescence on **branched** benches | **Done**: rounds 9–10; the bench gained arms, since an epi path is a second path, not a folded one |
 | M8 | Infinity correction, full stand, sandbox | Rounds 11–12 |
 | M8b | Complex-amplitude contrast: phase, polarization, DIC | Rounds 13–15 |
 | M9 | Packaging, installers, onboarding, art pass | Signed builds published |

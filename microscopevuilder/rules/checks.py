@@ -628,3 +628,126 @@ def check_illumination_throughput(
             "and irradiance goes as the square of the collected NA"
         ),
     )
+
+
+def check_epi_separation(bench: Bench, beamsplitter_name: str, objective_name: str) -> RuleResult:
+    """Does the episcopic illumination actually reach the specimen through the objective?
+
+    In an epi stand the objective is its own condenser: illumination enters at the
+    beamsplitter, travels *back* down through the objective to the specimen, and
+    the returning light comes up the same path. The beamsplitter must therefore sit
+    between the objective and the image, not anywhere else -- put it below the
+    objective and there is nothing to illuminate through.
+    """
+    splitter = bench.get(beamsplitter_name)
+    objective = bench.get(objective_name)
+    status = Status.PASS if splitter.s > objective.s else Status.FAIL
+    return RuleResult(
+        name="Epi geometry",
+        status=status,
+        summary=(
+            "the beamsplitter sits above the objective, so illumination reaches the "
+            "specimen through it"
+            if status is Status.PASS
+            else "the beamsplitter is below the objective: illumination never reaches the specimen"
+        ),
+        equation=(
+            f"{beamsplitter_name} at s = {splitter.s:.2f} mm, {objective_name} at "
+            f"s = {objective.s:.2f} mm"
+        ),
+        culprit=None if status is Status.PASS else beamsplitter_name,
+        remedy="move the beamsplitter between the objective and the intermediate image",
+    )
+
+
+def check_filter_set(cube, fluorophore, minimum_signal: float = 1.0,
+                     maximum_bleedthrough: float = 0.25) -> RuleResult:
+    """Does this filter cube actually work with this fluorophore?
+
+    Two independent ways to fail, and a build has to clear both. A mismatched cube
+    delivers no excitation where the dye absorbs, so there is nothing to see. A cube
+    whose excitation and emission bands overlap leaks excitation straight to the
+    detector -- and since excitation is orders of magnitude brighter than emission,
+    even a small leak turns a black background grey.
+    """
+    signal = cube.signal(fluorophore)
+    bleed = cube.bleedthrough()
+
+    if signal < minimum_signal:
+        return RuleResult(
+            name="Filter set",
+            status=Status.FAIL,
+            summary=(
+                f"the {cube.name} cube barely excites {fluorophore.name}: relative "
+                f"signal {signal:.3g}"
+            ),
+            equation=(
+                f"signal = (excitation x dichroic reflectance x dye absorption) x "
+                f"(dye emission x dichroic transmittance x emission filter) = {signal:.3g}"
+            ),
+            measured=signal,
+            target=minimum_signal,
+            culprit="filter cube",
+            remedy=(
+                f"{fluorophore.name} absorbs near {fluorophore.excitation_peak_nm:.0f} nm "
+                f"and emits near {fluorophore.emission_peak_nm:.0f} nm; pick a cube whose "
+                "bands sit there"
+            ),
+        )
+
+    status = Status.PASS if bleed <= maximum_bleedthrough else Status.FAIL
+    return RuleResult(
+        name="Filter set",
+        status=status,
+        summary=(
+            f"{cube.name} on {fluorophore.name}: signal {signal:.3g}, bleedthrough {bleed:.3g}"
+            + ("" if status is Status.PASS else " -- excitation is reaching the detector")
+        ),
+        equation=(
+            f"bleedthrough = excitation x dichroic reflect x dichroic transmit x emission "
+            f"= {bleed:.3g}; excitation band {cube.excitation.label()}, "
+            f"emission band {cube.emission.label()}, dichroic edge "
+            f"{cube.dichroic.edge_nm:.0f} nm"
+        ),
+        measured=bleed,
+        target=maximum_bleedthrough,
+        culprit="filter cube",
+        remedy=(
+            "separate the excitation and emission bands across the dichroic edge; "
+            "they must not overlap, because excitation is far brighter than emission"
+        ),
+    )
+
+
+def check_stokes_shift(fluorophore, cube) -> RuleResult:
+    """Is the dichroic edge actually between excitation and emission?
+
+    The Stokes shift is the entire reason fluorescence can be separated from its own
+    illumination. If the dichroic edge does not fall inside that gap, no combination
+    of filters will help.
+    """
+    edge = cube.dichroic.edge_nm
+    low, high = fluorophore.excitation_peak_nm, fluorophore.emission_peak_nm
+    inside = low < edge < high
+    return RuleResult(
+        name="Dichroic placement",
+        status=Status.PASS if inside else Status.FAIL,
+        summary=(
+            f"the dichroic edge at {edge:.0f} nm sits inside {fluorophore.name}'s "
+            f"{fluorophore.stokes_shift_nm:.0f} nm Stokes shift"
+            if inside
+            else f"the dichroic edge at {edge:.0f} nm is outside the "
+            f"{low:.0f}-{high:.0f} nm gap it has to split"
+        ),
+        equation=(
+            f"excitation peak {low:.0f} nm < dichroic {edge:.0f} nm < emission peak {high:.0f} nm"
+        ),
+        measured=edge,
+        target=(low + high) / 2,
+        units="nm",
+        culprit="dichroic",
+        remedy=(
+            "choose a dichroic whose edge falls between the dye's excitation and "
+            "emission peaks -- that gap is the whole basis of the technique"
+        ),
+    )

@@ -312,3 +312,41 @@ def test_reading_a_card_upstream_of_the_object_raises_clearly():
     bench = rnd.reference_build()
     with pytest.raises(ValueError, match="upstream of the object plane"):
         read(bench, rnd.s_object, 50.0)
+
+
+# --- branched (episcopic) benches --------------------------------------------
+
+
+@pytest.mark.parametrize("number", [9, 10])
+def test_epi_rounds_open_and_draw(app, number):
+    w = Workspace(number)
+    assert w.report_panel.headline.text() == "ROUND PASSED"
+    labels = {r.label for r in w.scene.model.rays}
+    assert "illumination_axial" in labels and "marginal" in labels
+
+    image = QtGui.QImage(700, 350, QtGui.QImage.Format_ARGB32)
+    painter = QtGui.QPainter(image)
+    w.scene.render(painter)
+    painter.end()
+
+
+def test_illumination_rays_on_an_arm_are_tagged_with_that_arm(app):
+    w = Workspace(9)
+    illumination = [r for r in w.scene.model.rays if r.label.startswith("illumination")]
+    assert illumination
+    assert all(r.arm == "epi" for r in illumination)
+    assert all(r.arm == "main" for r in w.scene.model.rays if not r.label.startswith("illumination"))
+
+
+def test_arm_elements_are_placed_off_the_main_axis(app):
+    # If the arm were drawn on the main axis the epi stand would be unreadable.
+    rnd = get_round(9)
+    bench = rnd.reference_build()
+    scene = BenchScene()
+    scene.set_bench(bench, rnd.s_object)
+
+    lamp_item = next(i for i in scene.items() if isinstance(i, ElementItem) and i.name == "lamp")
+    objective_item = next(
+        i for i in scene.items() if isinstance(i, ElementItem) and i.name == "objective"
+    )
+    assert lamp_item.pos() != objective_item.pos()

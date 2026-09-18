@@ -40,9 +40,50 @@ class Fold:
         return v / n
 
 
+@dataclass(frozen=True)
+class Arm:
+    """A side branch that joins the main axis at a beamsplitter or dichroic.
+
+    Episcopic illumination is not a folded path -- it is a *second* path meeting the
+    imaging path. The epi illuminator comes in from the side, turns down through the
+    objective, and the returning light carries on up the main axis; two bundles share
+    the objective while travelling in opposite directions through it.
+
+    An arm has its own path coordinate running from 0 at its source to ``length_mm``
+    at the junction. Tracing the arm walks its own elements and then continues into
+    the main axis from ``junction_s``, so the objective is traced once per path and
+    the two agree about it by construction.
+    """
+
+    name: str
+    junction_s: float
+    length_mm: float
+    direction: tuple[float, float, float] = (0.0, 0.0, -1.0)
+    continues: str = "forward"  # "forward" or "reverse" along the main axis
+
+    def __post_init__(self) -> None:
+        if self.continues not in ("forward", "reverse"):
+            raise ValueError(
+                f"arm {self.name}: continues must be 'forward' or 'reverse', "
+                f"got {self.continues!r}"
+            )
+
+    def unit(self) -> np.ndarray:
+        v = np.array(self.direction, dtype=float)
+        n = np.linalg.norm(v)
+        if n == 0:
+            raise ValueError(f"arm {self.name}: direction cannot be zero")
+        return v / n
+
+
 @dataclass
 class BenchElement:
-    """A placed component. ``s`` is optical path position; 3D follows from folds."""
+    """A placed component. ``s`` is optical path position; 3D follows from folds.
+
+    ``arm`` names which path the element sits on. Elements on the main axis use
+    ``"main"``; elements on a side branch use that arm's name, and their ``s`` is
+    measured along the arm rather than along the main axis.
+    """
 
     name: str
     s: float
@@ -51,6 +92,7 @@ class BenchElement:
     focal_length_mm: float | None = None
     label: str = ""
     catalog_key: str | None = None
+    arm: str = "main"
     metadata: dict = field(default_factory=dict)
 
     def to_optical(self) -> Element:
@@ -70,9 +112,11 @@ class Bench:
         folds: list[Fold] | None = None,
         origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
         initial_direction: tuple[float, float, float] = (1.0, 0.0, 0.0),
+        arms: list[Arm] | None = None,
     ):
         self.elements = list(elements or [])
         self.folds = sorted(folds or [], key=lambda f: f.s)
+        self.arms = {a.name: a for a in (arms or [])}
         self.origin = np.array(origin, dtype=float)
         d = np.array(initial_direction, dtype=float)
         self.initial_direction = d / np.linalg.norm(d)
@@ -105,7 +149,20 @@ class Bench:
     def of_kind(self, kind: str) -> list[BenchElement]:
         return [e for e in self.elements if e.kind == kind]
 
+    def on_arm(self, arm: str) -> list[BenchElement]:
+        return [e for e in self.elements if e.arm == arm]
+
     # --- geometry ------------------------------------------------------------
+
+    def position_of_arm(self, arm_name: str, s: float) -> np.ndarray:
+        """3D position at path coordinate ``s`` along a side arm.
+
+        The arm runs toward the junction, so ``s = length_mm`` lands exactly on the
+        main axis at ``junction_s`` and the two paths meet where the beamsplitter is.
+        """
+        arm = self.arms[arm_name]
+        junction = self.position_of(arm.junction_s)
+        return junction - arm.unit() * (arm.length_mm - s)
 
     def position_of(self, s: float) -> np.ndarray:
         """3D position at path coordinate ``s``, walking the folds.
@@ -130,20 +187,66 @@ class Bench:
         return [self.position_of(s) for s in stops]
 
     def extent(self) -> float:
-        return max([e.s for e in self.elements] + [f.s for f in self.folds] + [0.0])
+        return max(
+            [e.s for e in self.elements if e.arm == "main"]
+            + [f.s for f in self.folds]
+            + [a.junction_s for a in self.arms.values()]
+            + [0.0]
+        )
 
     # --- optics --------------------------------------------------------------
 
-    def to_paraxial(self) -> ParaxialSystem:
-        """Hand the bench to the trace engine.
+    def to_paraxial(self, arm: str = "main") -> ParaxialSystem:
+        """Hand one path to the trace engine.
 
         Folds are optically transparent, and white cards are excluded entirely:
         they are diagnostic probes, so holding one up must never change the answer
         it is being used to measure. See :mod:`microscopevuilder.bench.probe`.
+
+        For a side arm the returned system contains the arm's own elements at their
+        arm coordinates, followed by the main-axis elements from the junction
+        onward, shifted so the path coordinate runs continuously. The objective
+        therefore appears in both systems at the correct distance along each path,
+        which is exactly the physical situation in an epi stand.
         """
-        return ParaxialSystem(
-            [e.to_optical() for e in self.elements if e.kind != "white_card"]
+        if arm == "main":
+            return ParaxialSystem(
+                [e.to_optical() for e in self.elements
+                 if e.arm == "main" and e.kind != "white_card"]
+            )
+
+        spec = self.arms[arm]
+        elements = [
+            e.to_optical() for e in self.elements
+            if e.arm == arm and e.kind != "white_card"
+        ]
+        for e in self.elements:
+            if e.arm != "main" or e.kind == "white_card":
+                continue
+            if spec.continues == "reverse":
+                # Episcopic illumination runs the other way down the main axis: it
+                # enters at the beamsplitter and travels back through the objective
+                # to the specimen, while the returning light goes the other way.
+                # A thin lens is symmetric, so the same element serves both.
+                if e.s > spec.junction_s:
+                    continue
+                offset = spec.junction_s - e.s
+            else:
+                if e.s < spec.junction_s:
+                    continue
+                offset = e.s - spec.junction_s
+            optical = e.to_optical()
+            optical.s = spec.length_mm + offset
+            elements.append(optical)
+        return ParaxialSystem(elements)
+
+    def arm_coordinate(self, arm: str, main_s: float) -> float:
+        """Convert a main-axis position into the coordinate of a joining arm."""
+        spec = self.arms[arm]
+        offset = (
+            spec.junction_s - main_s if spec.continues == "reverse" else main_s - spec.junction_s
         )
+        return spec.length_mm + offset
 
     def cards(self) -> list["BenchElement"]:
         return [e for e in self.elements if e.kind == "white_card"]
@@ -170,6 +273,16 @@ class Bench:
                 {"s": f.s, "direction": list(f.direction), "name": f.name}
                 for f in self.folds
             ],
+            "arms": [
+                {
+                    "name": a.name,
+                    "junction_s": a.junction_s,
+                    "length_mm": a.length_mm,
+                    "direction": list(a.direction),
+                    "continues": a.continues,
+                }
+                for a in self.arms.values()
+            ],
             "elements": [
                 {
                     "name": e.name,
@@ -179,6 +292,7 @@ class Bench:
                     "focal_length_mm": e.focal_length_mm,
                     "label": e.label,
                     "catalog_key": e.catalog_key,
+                    "arm": e.arm,
                     "metadata": e.metadata,
                 }
                 for e in self.elements
@@ -195,6 +309,16 @@ class Bench:
             ],
             origin=tuple(data.get("origin", (0.0, 0.0, 0.0))),
             initial_direction=tuple(data.get("initial_direction", (1.0, 0.0, 0.0))),
+            arms=[
+                Arm(
+                    name=a["name"],
+                    junction_s=a["junction_s"],
+                    length_mm=a["length_mm"],
+                    direction=tuple(a.get("direction", (0.0, 0.0, -1.0))),
+                    continues=a.get("continues", "forward"),
+                )
+                for a in data.get("arms", [])
+            ],
         )
 
     def save(self, path: Path) -> None:

@@ -14,7 +14,7 @@ from __future__ import annotations
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..bench.bench import Bench
-from .geometry import axis_frame, point_at, project
+from .geometry import arm_axis_frame, axis_frame, point_at, project
 from .trace_model import TraceModel, build_trace_model
 
 # Marginal and chief rays are the classic teaching pair, so they get the two
@@ -41,6 +41,9 @@ KIND_COLORS = {
     "field_stop": COLOR_STOP,
     "detector": COLOR_DETECTOR,
     "white_card": COLOR_CARD,
+    "beamsplitter": COLOR_ILLUMINATION,
+    "dichroic": COLOR_ILLUMINATION,
+    "lamp": COLOR_ILLUMINATION,
 }
 
 
@@ -67,6 +70,7 @@ class ElementItem(QtWidgets.QGraphicsItem):
 
     def paint(self, painter, option, widget=None) -> None:
         element = self.element
+        painter.rotate(self._scene.glyph_rotation(element))
         half = element.semi_diameter_mm
         color = KIND_COLORS.get(element.kind, COLOR_AXIS)
         pen = QtGui.QPen(color, 1.2)
@@ -146,7 +150,7 @@ class BenchScene(QtWidgets.QGraphicsScene):
             return
         for element in self.bench.elements:
             item = ElementItem(self, element.name)
-            item.setPos(self.scene_pos_for(element.s))
+            item.setPos(self.scene_pos_for(element.s, element.arm))
             self.addItem(item)
             self._element_items[element.name] = item
         self.refresh()
@@ -166,20 +170,36 @@ class BenchScene(QtWidgets.QGraphicsScene):
         if self.show_ribbon:
             self._draw_ribbon()
         for name, item in self._element_items.items():
-            item.setPos(self.scene_pos_for(self.bench.get(name).s))
+            element = self.bench.get(name)
+            item.setPos(self.scene_pos_for(element.s, element.arm))
             item.update()
 
     # --- coordinate helpers --------------------------------------------------
 
-    def scene_pos_for(self, s: float) -> QtCore.QPointF:
-        p = project(self.bench.position_of(s))
+    def scene_pos_for(self, s: float, arm: str = "main") -> QtCore.QPointF:
+        p = (
+            project(self.bench.position_of(s))
+            if arm == "main"
+            else project(self.bench.position_of_arm(arm, s))
+        )
         return QtCore.QPointF(p[0], -p[1])
 
     def s_from_scene_x(self, x: float) -> float:
         return float(x)
 
+    def glyph_rotation(self, element) -> float:
+        """Degrees to rotate a component glyph so it lies across its own axis."""
+        import math
+
+        if element.arm == "main":
+            _, tangent, _ = axis_frame(self.bench, element.s)
+        else:
+            _, tangent, _ = arm_axis_frame(self.bench, element.arm, element.s)
+        return math.degrees(math.atan2(-tangent[1], tangent[0]))
+
     def y_for_element(self, name: str) -> float:
-        return self.scene_pos_for(self.bench.get(name).s).y()
+        element = self.bench.get(name)
+        return self.scene_pos_for(element.s, element.arm).y()
 
     def commit_element_move(self, name: str, scene_x: float) -> None:
         self.bench.move(name, max(0.0, self.s_from_scene_x(scene_x)))
@@ -214,10 +234,22 @@ class BenchScene(QtWidgets.QGraphicsScene):
         pts = [self.scene_pos_for(s) for s in stops]
         self._polyline(pts, COLOR_AXIS, 0.3, dashed=True)
 
-    def _ray_points(self, samples):
+        # Each side arm gets its own axis, drawn in to the junction. This is what
+        # makes an epi stand read as a branch rather than a confusing overlay.
+        for arm in self.bench.arms.values():
+            self._polyline(
+                [self.scene_pos_for(0.0, arm.name), self.scene_pos_for(arm.length_mm, arm.name)],
+                COLOR_ILLUMINATION, 0.3, dashed=True,
+            )
+
+    def _ray_points(self, samples, arm: str = "main"):
         pts = []
         for s, height in samples:
-            p = point_at(self.bench, s, height)
+            if arm == "main":
+                p = point_at(self.bench, s, height)
+            else:
+                here, _, normal = arm_axis_frame(self.bench, arm, s)
+                p = here + normal * height
             pts.append(QtCore.QPointF(p[0], -p[1]))
         return pts
 
@@ -235,11 +267,12 @@ class BenchScene(QtWidgets.QGraphicsScene):
             if not illumination and not self.show_imaging:
                 continue
             color = colors.get(ray.label, COLOR_AXIS)
-            pts = self._ray_points(ray.samples)
+            arm = getattr(ray, "arm", "main")
+            pts = self._ray_points(ray.samples, arm)
             self._polyline(pts, color, 0.7 if illumination else 1.0)
             if illumination:
                 self._polyline(
-                    self._ray_points([(s, -y) for s, y in ray.samples]), color, 0.7
+                    self._ray_points([(s, -y) for s, y in ray.samples], arm), color, 0.7
                 )
             # The marginal ray is symmetric about the axis; draw its mirror so the
             # cone reads as a cone.
