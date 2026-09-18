@@ -37,12 +37,19 @@ CATALOG_PATH = _catalog_path()
 
 @dataclass(frozen=True)
 class Aberrations:
-    """RMS wavefront error in microns, by term, at full field and full pupil."""
+    """An objective's residual aberrations, in the units each is naturally quoted in.
 
-    spherical: float = 0.0
-    field_curvature: float = 0.0
-    astigmatism: float = 0.0
-    secondary_color: float = 0.0
+    Two are wavefront errors in microns RMS at the reference aperture and full
+    field. Two are longitudinal *distances*, because that is how they are quoted and
+    measured: field curvature as a sag, and secondary spectrum as a fraction of the
+    focal length. See :func:`microscopevuilder.optics.wavefront.budget_at_field`
+    for how each is scaled and converted.
+    """
+
+    spherical_rms_um: float = 0.0
+    astigmatism_rms_um: float = 0.0
+    field_curvature_sag_um: float = 0.0
+    chromatic_focus_fraction: float = 0.0
     source: str = "pedagogical"
 
     @property
@@ -144,10 +151,10 @@ def load_catalog(path: Path | None = None) -> Catalog:
             immersion=o["immersion"],
             grade=o["grade"],
             aberrations=Aberrations(
-                spherical=float(ab.get("spherical", 0.0)),
-                field_curvature=float(ab.get("field_curvature", 0.0)),
-                astigmatism=float(ab.get("astigmatism", 0.0)),
-                secondary_color=float(ab.get("secondary_color", 0.0)),
+                spherical_rms_um=float(ab.get("spherical_rms_um", 0.0)),
+                astigmatism_rms_um=float(ab.get("astigmatism_rms_um", 0.0)),
+                field_curvature_sag_um=float(ab.get("field_curvature_sag_um", 0.0)),
+                chromatic_focus_fraction=float(ab.get("chromatic_focus_fraction", 0.0)),
                 source=str(ab.get("source", "pedagogical")),
             ),
             verified=bool(o.get("verified", False)),

@@ -267,7 +267,7 @@ Where practical, compare a few benches against a published prescription.
 | M8 | Infinity correction, parfocal turret, sandbox | **Done**: rounds 11–12; a glass-plate element makes the infinity-space argument demonstrable, and the bench gained enabled/disabled elements so a turret traces one objective |
 | M8b | Complex-amplitude contrast: phase, polarization, DIC | **Open**: rounds 13–15. Engine groundwork is done — complex amplitude works and a 0.2 rad phase object is verifiably invisible in brightfield. Needs `optics/jones.py`, phase ring/annulus at the objective BFP, Wollaston shear |
 | M9 | Packaging: one-file executables, published to Releases | **Done**: PyInstaller one-file per platform, built and smoke-tested in CI, attached to a GitHub Release on `v*` tags. Unsigned — noted in the release body |
-| **M10** | **Close the testing loop on the real bench** | The generated image is an image *of the player's build*: catalog aberration budgets, magnification, field height and photometry all feed synthesis, and measured image metrics feed the scorecard |
+| M10 | Close the testing loop on the real bench | **Done**: `imaging/build_optics.py` resolves a bench into its optical state, `imaging/synthesis.py` renders through it, `imaging/metrics.py` measures the result. An achromat and an apochromat now render differently, and the catalog's chromatic term is anchored to the textbook `f/2000` |
 | **M11** | Rounds 6–8: colour, flat field, camera port | Depends on M10 — these are graded on image measurements, not ray geometry |
 | **M12** | Game shell: parts bin, scoring, progress, specimen library | A player can lose a round on budget, see a star rating, diff against a working build, and resume where they left off |
 | **M13** | Verification and polish | Catalog entries datasheet-checked, ribbon playtested, onboarding and art pass |
@@ -276,30 +276,39 @@ Where practical, compare a few benches against a published prescription.
 supplies the metrics M12's scoring depends on. M8b sits after M11 because phase contrast
 and DIC are the most demanding consumers of the synthesis path M10 builds.
 
-### M10 — close the testing loop (the one real gap in what exists)
+### M10 — closing the testing loop (done)
 
-Pillar 2 says a configuration wins because the generated image satisfies the spec. It
-does not yet. `ImageWorker` takes four scalars — NA, wavelength, coherence parameter,
-specimen kind — and synthesises a generic image. It ignores the bench's magnification,
-field height and aberrations, and it ignores the round's specimen. The image on screen
-is *about* your NA, not *of* your build, and the scorecard grades ray geometry only.
+`imaging/build_optics.py` resolves a bench into the optical state synthesis needs:
+NA and magnification from the trace, the aberration budget from the objective's
+catalog entry scaled to the field height and aperture in use, **defocus computed**
+from where the image actually lands versus where the detector is, and photometry.
+`imaging/synthesis.py` renders through that resolved pupil; `imaging/metrics.py`
+measures the result. The workspace's Run button now renders the player's own bench
+and reports what was measured off the picture.
 
-Specifically unwired today:
+Three things the work changed about the design:
 
-- **`budget_at_field()` and the entire catalog aberration budget** (§2.2) are written
-  and tested but **called by nothing**. A plan objective and a non-plan objective
-  currently produce identical images, which makes the catalog's central teaching
-  distinction invisible.
-- **`imaging/metrics.py` does not exist.** No measured MTF, field uniformity, resolved
-  line-pairs or chromatic error feeds the scorecard, so the rendered image is
-  decorative rather than evidential.
-- **Photometry** (relative irradiance ∝ NA²/M², vignetting, sensor response and noise)
-  exists only inside round 3's throughput rule, not in synthesis.
+- **The aberration model moved to quotable units.** Storing field curvature and
+  secondary spectrum as wavefront coefficients hid the fact that both scale as `NA²`
+  when converted from a focus error. They are now stored as *distances*: field
+  curvature as a longitudinal sag in microns, secondary spectrum as a fraction of
+  focal length. The achromat figure is the textbook `f/2000`, which a student can
+  look up — far better provenance than "illustrative". It also makes the physics
+  right: a 4× (f = 50 mm) suffers ten times the chromatic focus shift of a 40×.
+- **Plan sags were an order of magnitude too large.** "Plan" means the sag sits
+  *inside* the depth of focus, which at NA 0.75 is only 0.49 µm — so sub-micron, not
+  "a few microns" as first written.
+- **An objective that declares no grade is treated as ideal**, not matched to the
+  nearest catalog entry by aperture. Matching on NA alone silently handed an
+  uncharacterised objective an achromat's secondary spectrum, and it would then have
+  imaged badly in blue for reasons nothing on the bench explained.
 
-This is sequenced **before** rounds 6–8 deliberately: "chromatic error under tolerance"
-and "corner MTF within spec" are image measurements. Those rounds cannot be graded
-honestly until the loop is closed, and building them first would mean grading them on
-proxies and rewriting them later.
+Measurement note: the SNR estimator is band-limited rather than region-based. The
+optics band-limit the image, so power beyond `2 NA / λ` is noise. A dark-region
+estimator reported *infinite* SNR on a photon-starved image (dark pixels quantize to
+zero, so their spread is zero), and an adjacent-pixel-difference estimator counted a
+grating's own modulation as noise, reporting SNR 6 on an image with 4500 photons per
+pixel.
 
 ### M12 — game shell (planned in §3, never built)
 

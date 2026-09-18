@@ -14,15 +14,38 @@
 #   plausible but must not be quoted to a student as fact.
 #
 #   [objectives.*.aberrations] are NOT vendor data and never will be. Manufacturers
-#   do not publish Zernike budgets. These are pedagogically representative values,
-#   chosen so that the *relationships* a student needs are true: an achromat shows
-#   markedly more secondary longitudinal color than an apochromat; a non-plan design
-#   shows field curvature that a plan design does not; higher NA at equal correction
-#   grade carries more residual spherical. Absolute magnitudes are illustrative.
-#   They are tagged `source = "pedagogical"` so the UI can say so on the inspector.
+#   do not publish Zernike budgets. They are tagged `source = "pedagogical"` so the
+#   UI can say so on the inspector. They are, however, anchored to quotable figures
+#   rather than invented:
 #
-# Units: microns of wavefront error (RMS) at the stated reference wavelength, over
-# the full pupil at full field unless noted.
+#     spherical_rms_um        microns RMS at the entry's own NA, scaling as NA^4.
+#                             Set so a plan achromat is marginally inside the
+#                             Marechal diffraction limit (RMS <= lambda/14 = 39 nm)
+#                             on axis at the correction wavelength, and an
+#                             apochromat is comfortably inside it.
+#
+#     astigmatism_rms_um      microns RMS at full field, scaling as h^2 NA^2.
+#
+#     field_curvature_sag_um  LONGITUDINAL sag in microns at full field: how far the
+#                             corner focus sits from the centre focus. A plan design
+#                             holds this WELL INSIDE the depth of focus -- which at
+#                             NA 0.75 is only 0.49 um, so a plan design means sub-
+#                             micron sag, not "a few microns". A non-plan design of
+#                             the same grade runs to tens of microns and is visibly
+#                             soft at the corners. Quoted as a distance because that
+#                             is how field curvature is measured.
+#
+#     chromatic_focus_fraction  secondary spectrum as a FRACTION OF FOCAL LENGTH
+#                             across the visible band. The textbook figure for an
+#                             achromat is about f/2000, i.e. 5e-4; an apochromat
+#                             brings a third wavelength to common focus and is
+#                             roughly an order of magnitude better. This is the
+#                             number that makes round 6 work, and a student can
+#                             check it in any optics text.
+#
+#   Both longitudinal terms convert to defocus as W020 = dz NA^2 / 2, so the same
+#   physical focus error costs a high-NA objective far more -- which is why
+#   chromatic correction matters most on the fastest lenses.
 
 [system]
 name = "Nikon CFI60"
@@ -48,10 +71,10 @@ grade = "plan_achromat"
 verified = false
 [objectives.cfi_plan_achro_4x.aberrations]
 source = "pedagogical"
-spherical = 0.015
-field_curvature = 0.010
-astigmatism = 0.012
-secondary_color = 0.060
+spherical_rms_um = 0.02
+astigmatism_rms_um = 0.012
+field_curvature_sag_um = 0.9
+chromatic_focus_fraction = 0.0005
 
 [objectives.cfi_plan_achro_10x]
 label = "CFI Plan Achromat 10x/0.25"
@@ -63,10 +86,10 @@ grade = "plan_achromat"
 verified = false
 [objectives.cfi_plan_achro_10x.aberrations]
 source = "pedagogical"
-spherical = 0.030
-field_curvature = 0.014
-astigmatism = 0.018
-secondary_color = 0.070
+spherical_rms_um = 0.024
+astigmatism_rms_um = 0.016
+field_curvature_sag_um = 0.8
+chromatic_focus_fraction = 0.0005
 
 [objectives.cfi_plan_achro_20x]
 label = "CFI Plan Achromat 20x/0.40"
@@ -78,10 +101,10 @@ grade = "plan_achromat"
 verified = false
 [objectives.cfi_plan_achro_20x.aberrations]
 source = "pedagogical"
-spherical = 0.045
-field_curvature = 0.018
-astigmatism = 0.022
-secondary_color = 0.080
+spherical_rms_um = 0.028
+astigmatism_rms_um = 0.02
+field_curvature_sag_um = 0.7
+chromatic_focus_fraction = 0.0005
 
 [objectives.cfi_plan_achro_40x]
 label = "CFI Plan Achromat 40x/0.65"
@@ -93,10 +116,10 @@ grade = "plan_achromat"
 verified = false
 [objectives.cfi_plan_achro_40x.aberrations]
 source = "pedagogical"
-spherical = 0.060
-field_curvature = 0.020
-astigmatism = 0.028
-secondary_color = 0.090
+spherical_rms_um = 0.032
+astigmatism_rms_um = 0.026
+field_curvature_sag_um = 0.6
+chromatic_focus_fraction = 0.0005
 
 [objectives.cfi_plan_achro_100x_oil]
 label = "CFI Plan Achromat 100x/1.25 Oil"
@@ -108,10 +131,10 @@ grade = "plan_achromat"
 verified = false
 [objectives.cfi_plan_achro_100x_oil.aberrations]
 source = "pedagogical"
-spherical = 0.075
-field_curvature = 0.022
-astigmatism = 0.032
-secondary_color = 0.100
+spherical_rms_um = 0.036
+astigmatism_rms_um = 0.03
+field_curvature_sag_um = 0.5
+chromatic_focus_fraction = 0.0005
 
 # --- CFI Plan Apochromat -----------------------------------------------------
 
@@ -125,10 +148,10 @@ grade = "plan_apochromat"
 verified = false
 [objectives.cfi_plan_apo_10x.aberrations]
 source = "pedagogical"
-spherical = 0.012
-field_curvature = 0.006
-astigmatism = 0.008
-secondary_color = 0.012
+spherical_rms_um = 0.008
+astigmatism_rms_um = 0.007
+field_curvature_sag_um = 0.45
+chromatic_focus_fraction = 4e-05
 
 [objectives.cfi_plan_apo_20x]
 label = "CFI Plan Apo Lambda 20x/0.75"
@@ -140,10 +163,10 @@ grade = "plan_apochromat"
 verified = false
 [objectives.cfi_plan_apo_20x.aberrations]
 source = "pedagogical"
-spherical = 0.018
-field_curvature = 0.007
-astigmatism = 0.010
-secondary_color = 0.014
+spherical_rms_um = 0.01
+astigmatism_rms_um = 0.009
+field_curvature_sag_um = 0.4
+chromatic_focus_fraction = 4e-05
 
 [objectives.cfi_plan_apo_40x]
 label = "CFI Plan Apo Lambda 40x/0.95"
@@ -155,10 +178,10 @@ grade = "plan_apochromat"
 verified = false
 [objectives.cfi_plan_apo_40x.aberrations]
 source = "pedagogical"
-spherical = 0.028
-field_curvature = 0.008
-astigmatism = 0.013
-secondary_color = 0.016
+spherical_rms_um = 0.013
+astigmatism_rms_um = 0.011
+field_curvature_sag_um = 0.35
+chromatic_focus_fraction = 4e-05
 
 [objectives.cfi_plan_apo_60x_oil]
 label = "CFI Plan Apo Lambda 60x/1.40 Oil"
@@ -170,10 +193,10 @@ grade = "plan_apochromat"
 verified = false
 [objectives.cfi_plan_apo_60x_oil.aberrations]
 source = "pedagogical"
-spherical = 0.034
-field_curvature = 0.009
-astigmatism = 0.015
-secondary_color = 0.018
+spherical_rms_um = 0.015
+astigmatism_rms_um = 0.013
+field_curvature_sag_um = 0.3
+chromatic_focus_fraction = 4e-05
 
 [objectives.cfi_plan_apo_100x_oil]
 label = "CFI Plan Apo Lambda 100x/1.45 Oil"
@@ -185,10 +208,10 @@ grade = "plan_apochromat"
 verified = false
 [objectives.cfi_plan_apo_100x_oil.aberrations]
 source = "pedagogical"
-spherical = 0.038
-field_curvature = 0.009
-astigmatism = 0.016
-secondary_color = 0.020
+spherical_rms_um = 0.017
+astigmatism_rms_um = 0.014
+field_curvature_sag_um = 0.3
+chromatic_focus_fraction = 4e-05
 
 # --- immersion media ---------------------------------------------------------
 

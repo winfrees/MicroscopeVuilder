@@ -52,19 +52,22 @@ def test_working_distance_falls_as_na_rises(cat):
     assert wds == sorted(wds, reverse=True)
 
 
-def test_apochromats_carry_less_secondary_color_than_achromats(cat):
+def test_apochromats_carry_less_secondary_spectrum_than_achromats(cat):
     # The defining difference between the grades, and the point of round 6.
+    # Stored as a fraction of focal length: the textbook figure for an achromat is
+    # about f/2000, and an apochromat is roughly an order of magnitude better.
     achro = max(
-        o.aberrations.secondary_color
+        o.aberrations.chromatic_focus_fraction
         for o in cat.objectives.values()
         if o.grade == "plan_achromat"
     )
     apo = max(
-        o.aberrations.secondary_color
+        o.aberrations.chromatic_focus_fraction
         for o in cat.objectives.values()
         if o.grade == "plan_apochromat"
     )
-    assert apo < achro / 3
+    assert achro == pytest.approx(5e-4)  # f/2000
+    assert apo < achro / 5
 
 
 def test_aberration_budgets_are_labelled_as_teaching_values(cat):

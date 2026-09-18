@@ -129,6 +129,19 @@ def defocus_from_stage_error(dz_mm: float, na: float, wavelength_um: float) -> W
     return Wavefront({"defocus": w020_um / (2.0 * math.sqrt(3.0))})
 
 
+def defocus_rms_from_shift(shift_um: float, na: float, wavelength_um: float) -> float:
+    """RMS defocus coefficient for a longitudinal focus shift given in microns.
+
+    The same relation as :func:`defocus_from_stage_error`, expressed for terms that
+    are naturally quoted as a *distance* rather than a wavefront: field curvature
+    sag, and the secondary spectrum of an achromat. Keeping them as distances is
+    what makes them checkable -- a student can look up "sag" or "longitudinal
+    chromatic aberration" and find millimetres, not Zernike coefficients.
+    """
+    w020_pv = shift_um * na**2 / 2.0
+    return w020_pv / (2.0 * math.sqrt(3.0))
+
+
 def budget_at_field(
     aberrations,
     field_height: float,
@@ -136,13 +149,24 @@ def budget_at_field(
     reference_na: float,
     wavelength_um: float,
     reference_wavelength_um: float = 0.5461,
+    focal_length_mm: float = 0.0,
 ) -> Wavefront:
-    """Scale a catalog aberration budget to the actual field height and NA.
+    """Scale a catalog aberration budget to the actual field height, NA and colour.
 
-    Seidel dependences, which is the whole reason the budgets are storable as single
-    numbers: spherical goes as NA^4 and is field-independent; astigmatism as h^2 NA^2;
-    field curvature as h^2 NA^2 but shows up as defocus off-axis; secondary color
-    enters as defocus scaled by how far the wavelength is from the correction point.
+    Seidel dependences, which is why the budgets are storable as single numbers:
+
+    * **spherical** goes as ``NA^4`` and does not depend on field height at all;
+    * **astigmatism** goes as ``h^2 NA^2``;
+    * **field curvature** is stored as a longitudinal *sag* in microns at full
+      field, going as ``h^2``, and converted to defocus here;
+    * **secondary spectrum** is stored as a fraction of the focal length -- the
+      textbook figure for an achromat is about ``f/2000`` across the visible band --
+      and likewise converted to defocus.
+
+    Storing the last two as distances rather than wavefront coefficients matters:
+    both scale as ``NA^2`` when converted, so a high-NA objective is punished for
+    the same physical focus error far more than a low-NA one. Folding that into a
+    stored constant would have hidden it.
 
     ``field_height`` is normalized to the design field, ``na`` to ``reference_na``.
     """
@@ -150,13 +174,20 @@ def budget_at_field(
     h = max(field_height, 0.0)
     dlam = abs(wavelength_um - reference_wavelength_um) / reference_wavelength_um
 
+    curvature_shift = aberrations.field_curvature_sag_um * h**2
+    # The quoted fraction spans roughly the visible band, dlam ~ 0.2 either side of
+    # the correction wavelength, so it is referred to that span.
+    chromatic_shift = (
+        aberrations.chromatic_focus_fraction * focal_length_mm * 1000.0 * (dlam / 0.2)
+    )
+
     return Wavefront(
         {
-            "spherical": aberrations.spherical * a**4,
-            "astigmatism_0": aberrations.astigmatism * h**2 * a**2,
+            "spherical": aberrations.spherical_rms_um * a**4,
+            "astigmatism_0": aberrations.astigmatism_rms_um * h**2 * a**2,
             "defocus": (
-                aberrations.field_curvature * h**2 * a**2
-                + aberrations.secondary_color * dlam
+                defocus_rms_from_shift(curvature_shift, na, wavelength_um)
+                + defocus_rms_from_shift(chromatic_shift, na, wavelength_um)
             ),
         }
     )

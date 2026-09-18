@@ -194,24 +194,67 @@ def test_status_line_reports_the_image_plane_when_one_exists(app):
 
 
 def test_scope_view_accepts_a_synthesized_image(app):
+    from microscopevuilder.imaging.build_optics import resolve_build_optics
+    from microscopevuilder.imaging.synthesis import RenderedImage
+
     w = Workspace(1)
-    w._on_image(np.random.default_rng(0).random((64, 64)))
+    bench = w.bench
+    optics = resolve_build_optics(bench, w.round.s_object, "screen", 0.5461)
+    rendered = RenderedImage(
+        np.random.default_rng(0).random((64, 64)), 0.1, optics, []
+    )
+    w._on_image(rendered)
     assert w.scope.pixmap() is not None
     assert w.scope.pixmap().width() == 64
+    assert w.metrics_panel.table.topLevelItemCount() > 0
 
 
-def test_image_worker_runs_off_thread_and_returns_an_image(app):
-    from microscopevuilder.ui.workspace import ImageWorker
+def test_image_worker_renders_the_actual_bench_off_thread(app):
+    from microscopevuilder.imaging.synthesis import RenderSpec
+    from microscopevuilder.ui.workspace import SPECIMENS, ImageWorker
+
+    rnd = get_round(11)
+    bench = rnd.reference_build()
+    spec = RenderSpec(specimen=SPECIMENS["sine grating"], n=128, detector_name="sensor")
 
     received = []
-    worker = ImageWorker(0.25, 0.5461, 0.8, "amplitude")
+    worker = ImageWorker(bench, rnd.s_object, spec)
     worker.finished_image.connect(received.append)
     worker.start()
     assert worker.wait(60_000), "image synthesis timed out"
     app.processEvents()
 
-    assert received and received[0].shape == (256, 256)
-    assert received[0].min() >= 0.0
+    assert received
+    rendered = received[0]
+    assert rendered.intensity.shape == (128, 128)
+    assert rendered.intensity.min() >= 0.0
+    # The point of M10: the render knows which objective it went through.
+    assert rendered.optics.aberration_source.startswith("catalog:")
+    assert rendered.optics.na == pytest.approx(0.75)
+
+
+def test_running_a_test_populates_the_measurements_panel(app):
+    w = Workspace(11)
+    w.run_test()
+    assert w.worker.wait(60_000)
+    app.processEvents()
+
+    labels = [
+        w.metrics_panel.table.topLevelItem(i).text(0)
+        for i in range(w.metrics_panel.table.topLevelItemCount())
+    ]
+    assert "Strehl ratio" in labels
+    assert "field uniformity (corner/centre)" in labels
+    assert "pedagogical" in w.metrics_panel.provenance.text()
+
+
+def test_the_measurements_panel_names_its_aberration_provenance(app):
+    # A student must never mistake a teaching budget for a datasheet value.
+    w = Workspace(11)
+    w.run_test()
+    assert w.worker.wait(60_000)
+    app.processEvents()
+    assert "not vendor data" in w.metrics_panel.provenance.text()
 
 
 # --- the white card ----------------------------------------------------------
