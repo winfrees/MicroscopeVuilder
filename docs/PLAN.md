@@ -8,6 +8,17 @@ infinity-corrected stand.
 
 ---
 
+## 0. Locked decisions (answers to §7)
+
+| # | Decision | Consequence |
+|---|---|---|
+| 1 | **Audience: graduate students in biomedical sciences.** | Favor rigor. Real manufacturer conventions (DIN 160 mm, RMS thread, Nikon CFI60 / Olympus UIS2 200 mm and 180 mm tube lenses), real NA/immersion values, correct nomenclature throughout. Math is surfaced, not hidden: every scorecard shows the governing equation with the player's numbers substituted in. Tolerances are set from what actually matters at the bench (e.g. Nyquist, NA matching), not from difficulty tuning. |
+| 2 | **Rigor ceiling: thin lens + wavefront aberrations.** | No sequential real-ray trace, no glass prescriptions, no Snell at surfaces. Elements are ideal thin lenses (or ideal 4f groups) carrying an *assigned* wavefront-aberration budget expressed in Zernike terms. Removes `optics/raytrace.py` and `materials.py`-as-glass-catalog from the plan; adds `optics/wavefront.py`. See §2.2. |
+| 3 | **2D bench now, 3D later.** | The bench model is stored in 3D from day one (position + direction vector per element, folds are real rotations); only the *renderer* is 2D. No geometry is flattened into screen space. A 3D view becomes a second renderer against the same model, not a rewrite. |
+| 4 | **Contrast techniques are rounds, after Köhler.** | Phase, DIC and polarization become rounds 13–15, gated on a completed Köhler build (round 4). This makes them pedagogically honest — phase contrast is *unteachable* without conjugate planes already understood, since the phase ring lives in the objective back focal plane. Requires the engine to carry complex amplitude, not just intensity (see §2.3). |
+
+---
+
 ## 1. Design pillars
 
 1. **Physics is the puzzle.** No scripted "right answer" slots. A configuration wins
@@ -28,39 +39,62 @@ infinity-corrected stand.
 
 Two layers, both required.
 
-### 2.1 Geometric layer — paraxial + real ray trace
+### 2.1 Geometric layer — paraxial ABCD on a 3D bench
 
 - **Elements**: lamp, collector, field diaphragm, aperture diaphragm, condenser,
   specimen stage, objective, tube lens, mirrors/prisms, dichroic, filters, eyepiece,
-  camera sensor, field stop, beamsplitter cube.
-- **Representation**: each element is a surface list on a directed bench axis with
-  position `z`, clear aperture (semi-diameter), and either a thin-lens focal length or
-  a real surface set (radius, thickness, glass index, conic). Start thin-lens +
-  ABCD matrices; keep a `Surface` abstraction so a real sequential trace can replace it
-  without touching the game layer.
-- **ABCD/paraxial pass** gives, cheaply and every frame: image positions, transverse
-  and angular magnification, conjugate-plane sets, pupil positions, vignetting limits.
-  This drives the live UI.
-- **Real ray pass** (Snell at each surface, meridional + skew fans) runs on demand:
-  spot diagrams, defocus, spherical/field curvature, chromatic spread using a 3-line
-  (F, d, C) dispersion model per glass.
-- **Folding**: mirrors and 45° dichroics transform the axis, so an episcopic path is
-  modeled as a genuine folded bench rather than a special case. Geometry verification
-  works in the unfolded coordinate.
+  camera sensor, beamsplitter cube, and (rounds 13–15) phase ring, Wollaston prism,
+  polarizer/analyzer.
+- **Representation**: every element carries a 3D `position` and unit `direction` on the
+  bench graph, a clear aperture (semi-diameter), and a 2x2 ABCD matrix. Ideal thin
+  lenses and ideal groups only — per decision 2. Mirrors and 45 deg dichroics rotate the
+  propagation direction, so an episcopic path is a genuinely folded bench; the trace
+  runs in unfolded path-length coordinate `s`, and the 2D renderer projects. The 3D
+  storage is what keeps decision 3 cheap.
+- **Paraxial pass** runs every frame: system matrix between any two planes, image
+  location (where `B = 0`), transverse and angular magnification, cardinal points,
+  stop/pupil identification, and marginal/chief ray traces. This drives the whole UI.
+- **Stops and pupils**: the aperture stop is found by tracing a probe ray from the axial
+  object point and picking the element with the smallest ratio of clear aperture to ray
+  height; the field stop likewise from the chief ray. Entrance/exit pupils are the stop
+  imaged by the preceding/following subsystems. This is what makes the conjugate-plane
+  ribbon (see §3) computable rather than authored.
 
-### 2.2 Image-formation layer — what the player sees
+### 2.2 Wavefront layer — where the optics get hard
 
-- **Diffraction limit**: Abbe `d = λ / (NA_obj + NA_cond)`; incoherent PSF from the
-  exit-pupil autocorrelation (OTF), FFT-based convolution of the specimen texture.
-- **Aberration → wavefront**: the real-ray OPD at the exit pupil becomes a pupil phase,
-  so a badly corrected build produces a genuinely blurred/colored image rather than a
-  cosmetic filter. Defocus, coma, astigmatism and lateral color all fall out of this.
-- **Illumination → image**: condenser NA sets partial coherence (illumination-pupil
-  fill); the field diaphragm image sets the illuminated field edge; a non-conjugate
-  lamp produces visible filament structure (the critical-vs-Köhler lesson, shown not
-  told).
-- **Photometry**: relative irradiance ∝ NA² / M², vignetting from clipped apertures,
-  and a simple sensor/eye response with noise so "technically correct but dim" is a
+Instead of deriving aberrations from surfaces, each element carries an **aberration
+budget**: a Zernike coefficient vector over its own pupil, scaled with field height and
+NA by the standard Seidel dependences, plus a chromatic term.
+
+- A catalog of realistic components: an **achromat** 20x/0.5 carries residual spherical
+  and secondary longitudinal color; an **apochromat** carries far less but costs more
+  and has a shorter working distance; a **plan** objective carries little field curvature
+  while a non-plan one carries a lot. These numbers are *chosen to be representative of
+  real catalog parts* and documented with their source in `assets/components.yaml`.
+- The player's build sums contributions into a **total pupil phase** `W(rho, theta, h, lambda)`.
+- **Defocus and misalignment are computed, not assigned**: a wrong `z` becomes a real
+  defocus coefficient; a tilted fold becomes coma/astigmatism.
+- This is the whole reason the game teaches anything: the image degrades because the
+  wavefront is wrong, and the player can *open the pupil view* and see which Zernike
+  term is dominant and which element contributed it.
+
+### 2.2b Image formation
+
+- **Coherent transfer**: pupil function `P = A * exp(i*2*pi*W/lambda)`, amplitude PSF by FFT,
+  incoherent PSF = `|h|^2`, OTF by autocorrelation of `P`.
+- **Partial coherence**: condenser-to-objective NA ratio `S = NA_cond / NA_obj` sets the
+  illumination pupil fill. Use the Hopkins transmission cross-coefficient formulation,
+  precomputed on a coarse source grid; at `S -> 0` it degrades to coherent imaging and at
+  `S >= 1` to incoherent, both of which are cheap analytic checks for the test suite.
+- **Complex amplitude throughout** (decision 4): the specimen is a complex transmittance
+  `t = A * exp(i*phi)`, so a pure phase object is genuinely invisible in brightfield and
+  becomes visible only once the player puts a phase ring in the objective back focal
+  plane and a matched annulus in the condenser front focal plane. Polarization rides
+  along as a Jones vector per ray bundle for rounds 14–15.
+- **Diffraction limit** falls out: Abbe `d = lambda / (NA_obj + NA_cond)`, Airy radius
+  `0.61 lambda / NA`. Both are golden-test anchors.
+- **Photometry**: relative irradiance proportional to NA^2 / M^2, vignetting from clipped
+  apertures, sensor/eye response with shot noise, so "correct but too dim to see" is a
   real failure mode.
 
 ### 2.3 Verified geometry — the rule checker
@@ -122,10 +156,15 @@ explanation. This is both the win condition and the tutorial.
 | 9 | Episcopic | Vertical illuminator, epi-brightfield, folded axis | Reflected-light image of opaque metal |
 | 10 | Fluorescence | Dichroic, excitation/emission, stray light | Signal/background above threshold |
 | 11 | Infinity | Remove tube length, infinity space, tube lens | Same M, and inserting a filter in infinity space doesn't shift focus |
-| 12 | Full stand | Combined dia + epi, turret parfocality, DIC/phase (stretch) | All rules green across three objectives |
+| 12 | Full stand | Combined dia + epi, turret parfocality | All rules green across three objectives |
+| 13 | Phase contrast | Phase annulus + ring conjugate to the objective BFP, phase object | Unstained cell visible; halo artifact understood |
+| 14 | Polarization | Jones calculus, crossed polars, birefringent specimen | Extinction achieved, birefringent structure resolved |
+| 15 | DIC | Wollaston prisms, shear, bias retardation | Pseudo-relief image with correct shear axis |
 
-Rounds 1–4 teach, 5–8 tighten tolerances, 9–12 restructure the bench. A free
-**sandbox** unlocks alongside round 5.
+Rounds 1–4 teach, 5–8 tighten tolerances, 9–12 restructure the bench, and 13–15 are the
+contrast techniques — gated on round 4, because a phase ring is meaningless to a player
+who does not yet own the objective back focal plane as a concept. A free **sandbox**
+unlocks alongside round 5.
 
 ---
 
@@ -133,7 +172,7 @@ Rounds 1–4 teach, 5–8 tighten tolerances, 9–12 restructure the bench. A fr
 
 ```
 microscopevuilder/
-  optics/       surfaces, abcd.py, raytrace.py, materials.py, pupil.py, psf.py
+  optics/       paraxial.py, wavefront.py, pupil.py, psf.py, coherence.py, jones.py
   bench/        component library, Bench model, folding, serialization (JSON)
   rules/        invariant checks, tolerances, explanations
   imaging/      specimen textures, image synthesis, metrics (MTF, uniformity)
@@ -149,6 +188,8 @@ tests/          golden optical cases, rule tests, round-solvability tests
   (drag, snap, z-order, hit testing) and `QImage` for the rendered scope view. pygame
   was considered and rejected: it has no widget layer, and this game is 60% inspector
   panels. Qt also packages cleanly.
+- Bench model is 3D-native with a 2D renderer (decision 3); `ui/render2d.py` is kept
+  behind a `BenchRenderer` protocol so `ui/render3d.py` can be added later.
 - Engine is **pure and UI-free**: `Bench -> TraceResult -> RuleReport -> RenderedImage`.
   Everything in `optics/`, `rules/`, `imaging/` is importable and testable headless.
 - Determinism: fixed seeds for noise so scores are reproducible.
@@ -181,33 +222,29 @@ Where practical, compare a few benches against a published prescription.
 | M | Deliverable | Gate |
 |---|---|---|
 | M0 | Repo scaffold, CI, test harness | `pytest` green on 3 OSes |
-| M1 | `optics/` paraxial + ABCD + real trace | Golden tests pass |
-| M2 | `imaging/` PSF + convolution + metrics | Airy/Abbe reproduce analytically |
+| M1 | `optics/` paraxial ABCD, stops/pupils, 3D folding | Golden tests pass |
+| M2 | `optics/` wavefront + PSF/OTF + partial coherence | Airy/Abbe reproduce analytically; S->0 and S>=1 limits match |
 | M3 | Headless round 1–2 solvable via script | Solver test passes |
 | M4 | Qt workspace: drag, ray overlay, inspector | Playable round 2 |
 | M5 | Testing loop, scorecard, conjugate ribbon | Rounds 1–5 |
 | M6 | Illumination depth: Köhler, NA matching | Rounds 3–5 tuned, tolerances validated |
 | M7 | Epi + fluorescence, folded benches | Rounds 9–10 |
 | M8 | Infinity correction, full stand, sandbox | Rounds 11–12 |
+| M8b | Complex-amplitude contrast: phase, polarization, DIC | Rounds 13–15 |
 | M9 | Packaging, installers, onboarding, art pass | Signed builds published |
 
-**Highest-risk items, front-loaded**: (a) partial-coherence image synthesis that is both
-physically defensible and fast enough — prototype in M2 and be willing to fall back to
-an incoherent-PSF approximation with a documented caveat; (b) making conjugate planes
-*visible* enough that Köhler is a puzzle rather than a guessing game — prototype the
-ribbon UI in M4 and playtest before building rounds on it.
+**Highest-risk items, front-loaded**: (a) partial-coherence image synthesis (Hopkins TCC)
+that is both physically defensible and fast enough — prototype in M2; the documented
+fallback is an incoherent-PSF approximation, but note that decision 4 makes this harder
+to give up, since phase contrast *requires* complex amplitude; (b) making conjugate
+planes *visible* enough that Köhler is a puzzle rather than a guessing game — prototype
+the ribbon UI in M4 and playtest before building rounds on it; (c) sourcing defensible
+aberration budgets for the component catalog (§2.2) — these are the numbers a graduate
+student will check against their own bench, so each gets a cited source.
 
 ---
 
-## 7. Open questions for the user
+## 7. Open questions — RESOLVED
 
-1. **Audience**: teaching tool for microscopy students (favor rigor, real
-   prescriptions, named manufacturers' conventions) or a puzzle game for general
-   players (favor abstraction and tighter feedback loops)? This changes tolerance
-   design and how much math is surfaced.
-2. **Rigor ceiling**: is a thin-lens + wavefront-aberration model acceptable
-   throughout, or should real glass prescriptions and full sequential tracing be the
-   target? The former is ~3× less work and plays nearly the same.
-3. **2D bench only**, or does the episcopic/fluorescence work need a 3D view?
-4. **Contrast techniques** (phase, DIC, polarization) — in scope as rounds, or a later
-   expansion?
+All four answered; see §0 for the decisions and their consequences. New questions that
+arise during M1–M2 get appended here rather than blocking work.
