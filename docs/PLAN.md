@@ -12,7 +12,7 @@ infinity-corrected stand.
 
 | # | Decision | Consequence |
 |---|---|---|
-| 1 | **Audience: graduate students in biomedical sciences.** | Favor rigor. Real manufacturer conventions (DIN 160 mm, RMS thread, Nikon CFI60 / Olympus UIS2 200 mm and 180 mm tube lenses), real NA/immersion values, correct nomenclature throughout. Math is surfaced, not hidden: every scorecard shows the governing equation with the player's numbers substituted in. Tolerances are set from what actually matters at the bench (e.g. Nyquist, NA matching), not from difficulty tuning. |
+| 1 | **Audience: graduate students in biomedical sciences.** | Favor rigor. **Nikon CFI60 is the reference system** (200 mm tube lens, 60 mm parfocal, `f = 200/M`); DIN 160 mm appears only in the early finite-tube rounds, and the Olympus 180 mm tube length appears in round 11 as the cross-vendor trap. Real manufacturer conventions (RMS thread, real NA/WD/immersion values), real NA/immersion values, correct nomenclature throughout. Math is surfaced, not hidden: every scorecard shows the governing equation with the player's numbers substituted in. Tolerances are set from what actually matters at the bench (e.g. Nyquist, NA matching), not from difficulty tuning. |
 | 2 | **Rigor ceiling: thin lens + wavefront aberrations.** | No sequential real-ray trace, no glass prescriptions, no Snell at surfaces. Elements are ideal thin lenses (or ideal 4f groups) carrying an *assigned* wavefront-aberration budget expressed in Zernike terms. Removes `optics/raytrace.py` and `materials.py`-as-glass-catalog from the plan; adds `optics/wavefront.py`. See §2.2. |
 | 3 | **2D bench now, 3D later.** | The bench model is stored in 3D from day one (position + direction vector per element, folds are real rotations); only the *renderer* is 2D. No geometry is flattened into screen space. A 3D view becomes a second renderer against the same model, not a rewrite. |
 | 4 | **Contrast techniques are rounds, after Köhler.** | Phase, DIC and polarization become rounds 13–15, gated on a completed Köhler build (round 4). This makes them pedagogically honest — phase contrast is *unteachable* without conjugate planes already understood, since the phase ring lives in the objective back focal plane. Requires the engine to carry complex amplitude, not just intensity (see §2.3). |
@@ -223,7 +223,8 @@ Where practical, compare a few benches against a published prescription.
 |---|---|---|
 | M0 | Repo scaffold, CI, test harness | `pytest` green on 3 OSes |
 | M1 | `optics/` paraxial ABCD, stops/pupils, 3D folding | Golden tests pass |
-| M2 | `optics/` wavefront + PSF/OTF + partial coherence | Airy/Abbe reproduce analytically; S->0 and S>=1 limits match |
+| M2 | `optics/` wavefront + PSF/OTF + CFI60 catalog | **Done for the incoherent path**: Airy zero, 84% encircled energy, analytic MTF, quarter-wave Strehl all reproduce |
+| M2b | Partial coherence (Hopkins TCC) | S->0 and S>=1 limits match the coherent/incoherent analytics |
 | M3 | Headless round 1–2 solvable via script | Solver test passes |
 | M4 | Qt workspace: drag, ray overlay, inspector | Playable round 2 |
 | M5 | Testing loop, scorecard, conjugate ribbon | Rounds 1–5 |

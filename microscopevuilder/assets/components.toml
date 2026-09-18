@@ -1,0 +1,202 @@
+# Component catalog -- Nikon CFI60 ("CFI60-2") infinity system.
+#
+# System conventions (these are the numbers the rule checker enforces):
+#   tube lens focal length : 200 mm
+#   parfocal distance      : 60 mm
+#   objective focal length : f = 200 / M
+#
+# PROVENANCE, read this before trusting a number:
+#
+#   [objectives.*] nominal fields -- magnification, na, working_distance_mm,
+#   immersion -- are catalog specifications. They are recorded here from secondary
+#   knowledge and are marked `verified = false` until each has been checked against
+#   the current Nikon datasheet and the citation filled in. Anything still false is
+#   plausible but must not be quoted to a student as fact.
+#
+#   [objectives.*.aberrations] are NOT vendor data and never will be. Manufacturers
+#   do not publish Zernike budgets. These are pedagogically representative values,
+#   chosen so that the *relationships* a student needs are true: an achromat shows
+#   markedly more secondary longitudinal color than an apochromat; a non-plan design
+#   shows field curvature that a plan design does not; higher NA at equal correction
+#   grade carries more residual spherical. Absolute magnitudes are illustrative.
+#   They are tagged `source = "pedagogical"` so the UI can say so on the inspector.
+#
+# Units: microns of wavefront error (RMS) at the stated reference wavelength, over
+# the full pupil at full field unless noted.
+
+[system]
+name = "Nikon CFI60"
+tube_lens_focal_length_mm = 200.0
+parfocal_distance_mm = 60.0
+reference_wavelength_nm = 546.1  # e-line, the usual correction reference
+verified = false
+
+[tube_lens.cfi_tube]
+label = "CFI tube lens"
+focal_length_mm = 200.0
+semi_diameter_mm = 13.0
+
+# --- CFI Plan Achromat -------------------------------------------------------
+
+[objectives.cfi_plan_achro_4x]
+label = "CFI Plan Achromat 4x/0.10"
+magnification = 4.0
+na = 0.10
+working_distance_mm = 30.0
+immersion = "air"
+grade = "plan_achromat"
+verified = false
+[objectives.cfi_plan_achro_4x.aberrations]
+source = "pedagogical"
+spherical = 0.015
+field_curvature = 0.010
+astigmatism = 0.012
+secondary_color = 0.060
+
+[objectives.cfi_plan_achro_10x]
+label = "CFI Plan Achromat 10x/0.25"
+magnification = 10.0
+na = 0.25
+working_distance_mm = 10.5
+immersion = "air"
+grade = "plan_achromat"
+verified = false
+[objectives.cfi_plan_achro_10x.aberrations]
+source = "pedagogical"
+spherical = 0.030
+field_curvature = 0.014
+astigmatism = 0.018
+secondary_color = 0.070
+
+[objectives.cfi_plan_achro_20x]
+label = "CFI Plan Achromat 20x/0.40"
+magnification = 20.0
+na = 0.40
+working_distance_mm = 1.2
+immersion = "air"
+grade = "plan_achromat"
+verified = false
+[objectives.cfi_plan_achro_20x.aberrations]
+source = "pedagogical"
+spherical = 0.045
+field_curvature = 0.018
+astigmatism = 0.022
+secondary_color = 0.080
+
+[objectives.cfi_plan_achro_40x]
+label = "CFI Plan Achromat 40x/0.65"
+magnification = 40.0
+na = 0.65
+working_distance_mm = 0.65
+immersion = "air"
+grade = "plan_achromat"
+verified = false
+[objectives.cfi_plan_achro_40x.aberrations]
+source = "pedagogical"
+spherical = 0.060
+field_curvature = 0.020
+astigmatism = 0.028
+secondary_color = 0.090
+
+[objectives.cfi_plan_achro_100x_oil]
+label = "CFI Plan Achromat 100x/1.25 Oil"
+magnification = 100.0
+na = 1.25
+working_distance_mm = 0.23
+immersion = "oil"
+grade = "plan_achromat"
+verified = false
+[objectives.cfi_plan_achro_100x_oil.aberrations]
+source = "pedagogical"
+spherical = 0.075
+field_curvature = 0.022
+astigmatism = 0.032
+secondary_color = 0.100
+
+# --- CFI Plan Apochromat -----------------------------------------------------
+
+[objectives.cfi_plan_apo_10x]
+label = "CFI Plan Apo Lambda 10x/0.45"
+magnification = 10.0
+na = 0.45
+working_distance_mm = 4.0
+immersion = "air"
+grade = "plan_apochromat"
+verified = false
+[objectives.cfi_plan_apo_10x.aberrations]
+source = "pedagogical"
+spherical = 0.012
+field_curvature = 0.006
+astigmatism = 0.008
+secondary_color = 0.012
+
+[objectives.cfi_plan_apo_20x]
+label = "CFI Plan Apo Lambda 20x/0.75"
+magnification = 20.0
+na = 0.75
+working_distance_mm = 1.0
+immersion = "air"
+grade = "plan_apochromat"
+verified = false
+[objectives.cfi_plan_apo_20x.aberrations]
+source = "pedagogical"
+spherical = 0.018
+field_curvature = 0.007
+astigmatism = 0.010
+secondary_color = 0.014
+
+[objectives.cfi_plan_apo_40x]
+label = "CFI Plan Apo Lambda 40x/0.95"
+magnification = 40.0
+na = 0.95
+working_distance_mm = 0.21
+immersion = "air"
+grade = "plan_apochromat"
+verified = false
+[objectives.cfi_plan_apo_40x.aberrations]
+source = "pedagogical"
+spherical = 0.028
+field_curvature = 0.008
+astigmatism = 0.013
+secondary_color = 0.016
+
+[objectives.cfi_plan_apo_60x_oil]
+label = "CFI Plan Apo Lambda 60x/1.40 Oil"
+magnification = 60.0
+na = 1.40
+working_distance_mm = 0.13
+immersion = "oil"
+grade = "plan_apochromat"
+verified = false
+[objectives.cfi_plan_apo_60x_oil.aberrations]
+source = "pedagogical"
+spherical = 0.034
+field_curvature = 0.009
+astigmatism = 0.015
+secondary_color = 0.018
+
+[objectives.cfi_plan_apo_100x_oil]
+label = "CFI Plan Apo Lambda 100x/1.45 Oil"
+magnification = 100.0
+na = 1.45
+working_distance_mm = 0.13
+immersion = "oil"
+grade = "plan_apochromat"
+verified = false
+[objectives.cfi_plan_apo_100x_oil.aberrations]
+source = "pedagogical"
+spherical = 0.038
+field_curvature = 0.009
+astigmatism = 0.016
+secondary_color = 0.020
+
+# --- immersion media ---------------------------------------------------------
+
+[media.air]
+index = 1.000
+[media.water]
+index = 1.333
+[media.glycerol]
+index = 1.470
+[media.oil]
+index = 1.515  # standard immersion oil, matched to coverslip crown
