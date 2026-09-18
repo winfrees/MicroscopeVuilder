@@ -146,3 +146,100 @@ def birefringent_fibres(
         retardance[band] = delay
         azimuth[band] = angle + np.pi / 4
     return BirefringentField(retardance, azimuth)
+
+
+def usaf_bars(
+    n: int, sample_um: float, period_um: float, groups: int = 3
+) -> np.ndarray:
+    """A USAF-1951-style element: three bars, in both orientations.
+
+    The standard resolution target. Having both orientations in one field is the
+    point -- astigmatism and DIC shear both resolve one direction and not the
+    other, and a single-orientation grating hides that.
+    """
+    y, x = _coords(n, sample_um)
+    bar = period_um / 2.0
+    span = groups * period_um
+
+    horizontal = (np.abs(y) < span / 2) & (np.abs(x - span) < span / 2)
+    vertical = (np.abs(x + span) < span / 2) & (np.abs(y) < span / 2)
+    pattern = np.ones((n, n))
+    pattern[horizontal & (np.mod(y + span, period_um) < bar)] = 0.0
+    pattern[vertical & (np.mod(x + span, period_um) < bar)] = 0.0
+    return pattern.astype(complex)
+
+
+def siemens_star(n: int, sample_um: float, spokes: int = 36) -> np.ndarray:
+    """A radial star: every spatial frequency at once, in every direction.
+
+    Resolution falls off toward the centre, so the radius at which the spokes blur
+    together reads the limit straight off the image.
+    """
+    y, x = _coords(n, sample_um)
+    theta = np.arctan2(y, x)
+    radius = np.hypot(y, x)
+    pattern = (np.cos(spokes * theta / 2.0) > 0).astype(float)
+    pattern[radius > (n * sample_um / 2.4)] = 1.0
+    return pattern.astype(complex)
+
+
+def bead_field(
+    n: int, sample_um: float, diameter_um: float = 0.5, count: int = 40, seed: int = 0
+) -> np.ndarray:
+    """Scattered sub-resolution beads: point sources, for reading the PSF directly."""
+    rng = np.random.default_rng(seed)
+    y, x = _coords(n, sample_um)
+    pattern = np.zeros((n, n))
+    extent = n * sample_um * 0.4
+    for _ in range(count):
+        cy, cx = rng.uniform(-extent, extent, size=2)
+        pattern[np.hypot(y - cy, x - cx) <= diameter_um / 2] = 1.0
+    return pattern.astype(complex)
+
+
+def stained_section(n: int, sample_um: float, seed: int = 1) -> np.ndarray:
+    """A stained histology section: irregular absorbing structure, no phase."""
+    rng = np.random.default_rng(seed)
+    y, x = _coords(n, sample_um)
+    field = np.ones((n, n))
+    extent = n * sample_um * 0.45
+    for _ in range(26):
+        cy, cx = rng.uniform(-extent, extent, size=2)
+        radius = rng.uniform(1.0, 3.5)
+        depth = rng.uniform(0.25, 0.75)
+        field -= depth * np.exp(-((y - cy) ** 2 + (x - cx) ** 2) / (2 * radius**2))
+    return np.clip(field, 0.05, 1.0).astype(complex)
+
+
+def polished_metal(n: int, sample_um: float, seed: int = 2) -> np.ndarray:
+    """An opaque, reflective surface with scratches: the epi-brightfield specimen."""
+    rng = np.random.default_rng(seed)
+    y, x = _coords(n, sample_um)
+    field = np.full((n, n), 0.85)
+    for _ in range(14):
+        angle = rng.uniform(0, np.pi)
+        offset = rng.uniform(-n * sample_um / 3, n * sample_um / 3)
+        width = rng.uniform(0.2, 0.8)
+        line = np.abs(y * np.cos(angle) - x * np.sin(angle) - offset)
+        field -= 0.6 * np.exp(-(line**2) / (2 * width**2))
+    return np.clip(field, 0.02, 1.0).astype(complex)
+
+
+def ronchi_ruling(n: int, sample_um: float, period_um: float = 2.0) -> np.ndarray:
+    """A square-wave ruling for checking magnification and distortion."""
+    return amplitude_bars(n, sample_um, period_um)
+
+
+SPECIMEN_LIBRARY = {
+    "USAF target": lambda n, dx: usaf_bars(n, dx, period_um=max(dx * 6, 0.6)),
+    "Siemens star": siemens_star,
+    "Ronchi ruling": lambda n, dx: ronchi_ruling(n, dx, period_um=max(dx * 10, 1.0)),
+    "sine grating": lambda n, dx: sinusoidal_amplitude_grating(
+        n, dx, commensurate_period(n, dx, max(dx * 10, 1.0))
+    ),
+    "beads": lambda n, dx: bead_field(n, dx, diameter_um=max(dx, 0.3)),
+    "stained section": stained_section,
+    "unstained cell": lambda n, dx: phase_disc(n, dx, radius_um=n * dx / 6, phase_rad=0.6),
+    "birefringent fibres": birefringent_fibres,
+    "polished metal": polished_metal,
+}

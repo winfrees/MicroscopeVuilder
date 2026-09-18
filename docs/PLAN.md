@@ -269,7 +269,7 @@ Where practical, compare a few benches against a published prescription.
 | M9 | Packaging: one-file executables, published to Releases | **Done**: PyInstaller one-file per platform, built and smoke-tested in CI, attached to a GitHub Release on `v*` tags. Unsigned — noted in the release body |
 | M10 | Close the testing loop on the real bench | **Done**: `imaging/build_optics.py` resolves a bench into its optical state, `imaging/synthesis.py` renders through it, `imaging/metrics.py` measures the result. An achromat and an apochromat now render differently, and the catalog's chromatic term is anchored to the textbook `f/2000` |
 | M11 | Rounds 6–8: colour, flat field, camera port | **Done**: graded by a second *measured* pass that renders, alongside the live geometry pass. Non-plan objectives added to the catalog so round 7 has something to contrast against |
-| **M12** | Game shell: parts bin, scoring, progress, specimen library | A player can lose a round on budget, see a star rating, diff against a working build, and resume where they left off |
+| M12 | Game shell: parts budget, scoring, progress, specimen library | **Done**: budgets enforced, three-star rating, structural diff after a failure, atomic progress saves in the user config dir, nine specimens, and rounds that unlock on their prerequisite |
 | **M13** | Verification and polish | Catalog entries datasheet-checked, ribbon playtested, onboarding and art pass |
 
 **Recommended order: M10 → M11 → M8b → M12 → M13.** M10 unblocks M11 (see below) and
@@ -355,17 +355,27 @@ whatever is on the bench into a source, a pupil mask and a field transform.
   identical) and the relief follows the shear axis exactly, which is why you rotate
   the specimen and not the prism.
 
-### M12 — game shell (planned in §3, never built)
+### M12 — game shell (done)
 
-- **Parts bin and budget.** `parts_budget` is carried on every round and enforced
-  nowhere, so the "cheap correct solution beats brute force" pillar has no teeth.
-- **Star rating and the diff view.** §3 promises a rating from the metrics and a diff
-  against the reference build after one failure. `reference_build` exists for every
-  round; the diff view does not. The rating depends on M10's metrics.
-- **Progress and saves.** `platformdirs` is a declared dependency and is never
-  imported. Benches serialise to JSON, but player progress does not persist at all.
-- **Specimen library.** Two hardcoded specimens against the eight in §3 (USAF 1951,
-  Siemens star, diatom, stained section, beads, phase object, polished metal, Ronchi).
+- **Parts budget** enforced, counting everything except probes, stops and the lamp:
+  a white card is a measuring instrument, and charging a slot for it would penalise
+  the player for looking. A test asserts every round's own reference build fits its
+  budget, so no round is unwinnable.
+- **Three-star rating.** One star for solving it; the second for no outstanding
+  warnings; the third for staying inside budget. The second star is the interesting
+  one — it marks the difference between "it worked" and "a demonstrator would still
+  raise an eyebrow", which is what a WARN has meant since M5.
+- **Structural diff** after a failure, offered rather than forced. It says what
+  differs — missing, extra, moved, changed — and deliberately not what to do about
+  it, so working out why the difference matters is still the round.
+- **Progress** saves atomically (write to a sibling, then rename) into the user
+  config dir, never beside the executable: a one-file binary on a shared lab machine
+  may live somewhere read-only, and two people should not overwrite each other. Best
+  result is kept rather than latest, a corrupt save starts a fresh game instead of
+  refusing to open, and a save from a newer format is refused rather than misread.
+- **Nine specimens**, including the birefringent one. Rounds unlock on a
+  prerequisite, with the contrast techniques gated on Köhler rather than on the
+  round before them.
 
 ### Risk register
 

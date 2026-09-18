@@ -171,7 +171,8 @@ def test_scene_renders_to_an_image_without_error(app, tmp_path):
 def test_workspace_opens_on_a_passing_reference_build(workspace, app):
     w = workspace(2)
     assert w.report_panel.headline.text() == "ROUND PASSED"
-    assert w.report_panel.list.topLevelItemCount() == len(w.round.grade(w.bench).results)
+    # The live rules, plus the parts-budget row the workspace appends.
+    assert w.report_panel.list.topLevelItemCount() == len(w.round.grade(w.bench).results) + 1
 
 
 def test_workspace_scorecard_tracks_an_edit(workspace, app):
@@ -464,3 +465,39 @@ def test_a_geometry_only_round_shows_no_measured_verdict(workspace, app):
     app.processEvents()
     assert "measured rules" not in w.statusBar().currentMessage()
     assert w.metrics_panel.table.topLevelItem(0).text(0) == "Michelson contrast"
+
+
+# --- the game shell ----------------------------------------------------------
+
+
+def test_the_scorecard_shows_a_star_rating(workspace, app):
+    w = workspace(11)
+    assert "★★★" in w.report_panel.score_line.text()
+    assert "parts" in w.report_panel.score_line.text()
+
+
+def test_breaking_the_build_drops_the_rating_and_offers_the_diff(workspace, app):
+    w = workspace(11)
+    assert not w.diff_action.isEnabled()
+
+    w.bench.move("sensor", w.bench.get("sensor").s + 2.0)
+    w.refresh_live()
+    assert "☆☆☆" in w.report_panel.score_line.text()
+    assert w.diff_action.isEnabled()
+
+
+def test_the_workspace_offers_the_whole_specimen_library(workspace, app):
+    from microscopevuilder.imaging.specimens import SPECIMEN_LIBRARY
+
+    w = workspace(11)
+    offered = {w.specimen.itemText(i) for i in range(w.specimen.count())}
+    assert offered == set(SPECIMEN_LIBRARY)
+
+
+def test_the_budget_row_appears_on_the_scorecard(workspace, app):
+    w = workspace(11)
+    names = [
+        w.report_panel.list.topLevelItem(i).text(0)
+        for i in range(w.report_panel.list.topLevelItemCount())
+    ]
+    assert "Parts budget" in names

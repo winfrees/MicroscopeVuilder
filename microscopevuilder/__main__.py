@@ -11,7 +11,9 @@ import sys
 from pathlib import Path
 
 from .bench.bench import Bench
-from .game.rounds import ROUNDS, get_round
+from .game.progress import Progress
+from .game.rounds import PREREQUISITES, ROUNDS, get_round
+from .game.scoring import check_parts_budget, diff_against_reference, score_round
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -24,12 +26,21 @@ def main(argv: list[str] | None = None) -> int:
         "--no-measure", action="store_true",
         help="skip the measured (rendering) rules and grade on ray geometry only",
     )
+    parser.add_argument("--progress", type=Path, help="progress file (default: user config dir)")
+    parser.add_argument("--diff", action="store_true", help="on failure, diff against a working build")
     parser.add_argument("--save-reference", type=Path, help="write the reference build to JSON")
     args = parser.parse_args(argv)
 
     if args.list:
+        progress = Progress.load(args.progress)
         for n, r in sorted(ROUNDS.items()):
-            print(f"{n}. {r.title} -- {r.teaches}")
+            record = progress.record(n)
+            pips = "*" * record.stars + "." * (3 - record.stars)
+            locked = "" if progress.is_unlocked(n, PREREQUISITES) else "  (locked)"
+            print(f"[{pips}] {n}. {r.title} -- {r.teaches}{locked}")
+        from .game.progress import default_save_path
+
+        print(f"\n{progress.total_stars()} stars -- progress in {args.progress or default_save_path()}")
         return 0
 
     if args.ui:
@@ -53,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  Teaches: {rnd.teaches}\n")
 
     report = rnd.grade(bench)
+    report.add(check_parts_budget(bench, rnd.parts_budget))
     print(report.format())
 
     # Measured rules render the image, so they are a separate pass. Headless there
@@ -60,15 +72,30 @@ def main(argv: list[str] | None = None) -> int:
     if rnd.has_measured_rules and not args.no_measure:
         print()
         print("-- measured from the rendered image --")
-        measured = rnd.measure_image(bench)
-        print(measured.format())
-        report.results.extend(measured.results)
+        print(rnd.measure_image(bench).format())
 
+    measured_report = None
+    if rnd.has_measured_rules and not args.no_measure:
+        measured_report = rnd.measure_image(bench)
+
+    score = score_round(bench, rnd.parts_budget, report, measured_report)
     print()
-    if report.passed:
+    print(score.describe())
+
+    progress = Progress.load(args.progress)
+    progress.complete(rnd.number, score.stars, score.parts_used)
+    progress.save(args.progress)
+
+    if score.passed:
         print("ROUND PASSED")
         return 0
-    print(f"ROUND FAILED ({len(report.failures())} failing checks)")
+
+    if args.diff:
+        print()
+        print("-- how your build differs from a working one --")
+        print(diff_against_reference(bench, rnd.reference_build()).format())
+    else:
+        print("(run again with --diff to compare against a working build)")
     return 1
 
 

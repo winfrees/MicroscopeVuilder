@@ -18,12 +18,10 @@ from ..bench.bench import Bench
 from ..bench.probe import find_planes, read_card
 from ..game.rounds import Round, get_round
 from ..imaging import metrics
-from ..imaging.specimens import (
-    amplitude_bars,
-    commensurate_period,
-    phase_disc,
-    sinusoidal_amplitude_grating,
-)
+from ..game.progress import Progress
+from ..game.rounds import PREREQUISITES
+from ..game.scoring import check_parts_budget, diff_against_reference, score_round
+from ..imaging.specimens import SPECIMEN_LIBRARY
 from ..imaging.synthesis import RenderSpec, render_build
 from ..rules.base import RuleReport, Status
 
@@ -35,13 +33,7 @@ STATUS_COLORS = {
 }
 
 
-SPECIMENS = {
-    "bar target": lambda n, dx: amplitude_bars(n, dx, period_um=max(dx * 8, 0.5)),
-    "sine grating": lambda n, dx: sinusoidal_amplitude_grating(
-        n, dx, commensurate_period(n, dx, max(dx * 8, 0.5))
-    ),
-    "phase object": lambda n, dx: phase_disc(n, dx, radius_um=n * dx / 6, phase_rad=0.6),
-}
+SPECIMENS = SPECIMEN_LIBRARY
 
 
 class ImageWorker(QtCore.QThread):
@@ -169,11 +161,22 @@ class ReportPanel(QtWidgets.QWidget):
         self.headline = QtWidgets.QLabel("--")
         self.headline.setStyleSheet("font-weight: 600; font-size: 14px;")
         layout.addWidget(self.headline)
+        self.score_line = QtWidgets.QLabel("")
+        self.score_line.setWordWrap(True)
+        self.score_line.setStyleSheet("color: #9aa3b0;")
+        layout.addWidget(self.score_line)
         self.list = QtWidgets.QTreeWidget()
         self.list.setHeaderLabels(["check", "result"])
         self.list.setRootIsDecorated(True)
         self.list.setColumnWidth(0, 150)
         layout.addWidget(self.list)
+
+    def show_score(self, score) -> None:
+        stars = "\u2605" * score.stars + "\u2606" * (3 - score.stars)
+        detail = "; ".join(score.reasons) if score.reasons else "clean solve"
+        self.score_line.setText(
+            f"{stars}   {score.parts_used}/{score.parts_budget} parts   --   {detail}"
+        )
 
     def show_report(self, report: RuleReport) -> None:
         self.list.clear()
@@ -307,6 +310,8 @@ class Workspace(QtWidgets.QMainWindow):
         self.round: Round = get_round(round_number)
         self.bench: Bench = self.round.reference_build()
         self.worker: ImageWorker | None = None
+        self.progress = Progress.load()
+        self.last_measured = None
 
         self.setWindowTitle(f"MicroscopeVuilder -- round {self.round.number}: {self.round.title}")
         self.scene = BenchScene(self)
@@ -366,6 +371,11 @@ class Workspace(QtWidgets.QMainWindow):
         clear_cards.triggered.connect(self.clear_cards)
         bar.addAction(clear_cards)
 
+        self.diff_action = QtGui.QAction("Compare with a working build", self)
+        self.diff_action.setEnabled(False)
+        self.diff_action.triggered.connect(self.show_diff)
+        bar.addAction(self.diff_action)
+
         reset = QtGui.QAction("Reference build", self)
         reset.triggered.connect(self.load_reference)
         bar.addAction(reset)
@@ -420,7 +430,9 @@ class Workspace(QtWidgets.QMainWindow):
     def refresh_live(self) -> None:
         """Paraxial pass plus rule report. Budgeted for every drag."""
         report = self.round.grade(self.bench)
+        report.add(check_parts_budget(self.bench, self.round.parts_budget))
         self.report_panel.show_report(report)
+        self._update_score(report)
         self.card_panel.show_reading(self.bench, self.round.s_object)
         self.scene.refresh()
         model = self.scene.model
@@ -436,6 +448,32 @@ class Workspace(QtWidgets.QMainWindow):
         if model.aperture_stop:
             bits.append(f"stop: {model.aperture_stop}")
         self.statusBar().showMessage("   |   ".join(bits))
+
+    def _update_score(self, report) -> None:
+        """Rate the build and remember it. Progress should survive closing the app."""
+        score = score_round(self.bench, self.round.parts_budget, report, self.last_measured)
+        self.report_panel.show_score(score)
+        self.diff_action.setEnabled(not score.passed)
+        if score.passed:
+            self.progress.complete(self.round.number, score.stars, score.parts_used)
+            try:
+                self.progress.save()
+            except OSError:
+                # A read-only or full disk must not take the game down with it.
+                self.statusBar().showMessage("could not save progress (read-only location?)")
+
+    def show_diff(self) -> None:
+        """Offer the structural diff -- what differs, not what to do about it."""
+        diff = diff_against_reference(self.bench, self.round.reference_build())
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Compared with a working build")
+        box.setText("How your build differs from one that solves this round:")
+        box.setDetailedText(diff.format())
+        box.setInformativeText(
+            "This says what is different, not what to do about it -- working out "
+            "why the difference matters is the round."
+        )
+        box.exec()
 
     def _toggle_rays(self, on: bool) -> None:
         self.scene.show_rays = on
@@ -516,6 +554,8 @@ class Workspace(QtWidgets.QMainWindow):
 
     def _on_image(self, result) -> None:
         rendered, measured = result
+        self.last_measured = measured
+        self.refresh_live()
         self.scope.show_image(rendered.intensity)
         self.metrics_panel.show_measurements(rendered, measured)
         message = f"image formed at {rendered.optics.describe()}"

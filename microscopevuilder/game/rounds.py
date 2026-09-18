@@ -1373,6 +1373,16 @@ def get_round(number: int) -> Round:
     return ROUNDS[number]
 
 
+# What each round waits on. Mostly the round before it, except the contrast
+# techniques, which are gated on Köhler: a phase ring is meaningless to a player
+# who does not yet own the objective back focal plane as a concept.
+PREREQUISITES: dict[int, int] = {
+    2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7,
+    9: 5, 10: 9, 11: 8, 12: 11,
+    13: 4, 14: 13, 15: 14,
+}
+
+
 ROUNDS: dict[int, Round] = {
     r.number: r
     for r in (
