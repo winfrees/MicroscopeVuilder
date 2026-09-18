@@ -18,9 +18,6 @@ Self-contained executables for each platform are attached to every
 Every commit to `main` publishes a development build (a prerelease tagged
 `build-N`); tagged `v*` versions publish a stable release. Both run the full test
 suite and exercise real rounds against the frozen binary before publishing.
-
-The macOS Intel build runs on a scarce runner, outside the critical path, and
-attaches to the release a few minutes after the other three.
 On macOS and Linux, `chmod +x MicroscopeVuilder-*` before the first run. The macOS
 and Windows builds are not code-signed, so the first launch needs Right-click → Open
 (macOS) or "More info" → "Run anyway" (Windows).

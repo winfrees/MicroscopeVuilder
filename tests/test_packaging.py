@@ -53,33 +53,34 @@ def test_the_spec_builds_one_file_not_a_directory():
     assert "a.binaries" in spec and "a.datas" in spec  # folded into the EXE
 
 
-def test_a_scarce_runner_cannot_block_the_release():
-    # The first run of this workflow sat queued on the Intel macOS runner for over
-    # fifteen minutes while every other platform finished, and timeout-minutes does
-    # not apply while a job waits for a runner. Intel therefore builds outside the
-    # critical path and attaches to the release afterwards.
-    workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-    assert "build-macos-intel:" in workflow
-    assert "continue-on-error: true" in workflow
-
-    import yaml
-
-    spec = yaml.safe_load(workflow)
-    assert spec["jobs"]["publish"]["needs"] == "build"
-    blocking = {m["label"] for m in spec["jobs"]["build"]["strategy"]["matrix"]["include"]}
-    assert "macos-x86_64" not in blocking
-    assert blocking == {"linux-x86_64", "windows-x86_64", "macos-arm64"}
-
-
-def test_the_intel_build_attaches_to_the_same_release():
+def test_the_intel_macos_job_uses_a_label_that_still_has_runners():
+    # macos-13 was used here first and never received a runner: the image is
+    # retired, so the job sat queued indefinitely and, because publish depended on
+    # the whole matrix, no release could go out at all. timeout-minutes does not
+    # help, since it only counts once a job is running. macos-15-intel is the
+    # current Intel image.
     import yaml
 
     workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     spec = yaml.safe_load(workflow)
-    steps = spec["jobs"]["build-macos-intel"]["steps"]
-    assert any("softprops/action-gh-release" in str(step.get("uses", "")) for step in steps)
-    # Same tag scheme as the main publisher, or it would attach to nothing.
-    assert "build-${GITHUB_RUN_NUMBER}" in workflow
+    runners = {m["os"] for m in spec["jobs"]["build"]["strategy"]["matrix"]["include"]}
+    assert "macos-13" not in runners
+    assert "macos-15-intel" in runners
+
+
+def test_all_four_platforms_publish_from_one_job():
+    # An earlier version built Intel in a separate job with its own publish step,
+    # to keep a slow runner off the critical path. That turned out to be solving
+    # the wrong problem -- the label was retired, not scarce -- and it left a
+    # window where the release existed with only one asset on it.
+    import yaml
+
+    spec = yaml.safe_load((REPO / ".github" / "workflows" / "release.yml").read_text())
+    assert set(spec["jobs"]) == {"build", "publish"}
+    labels = {m["label"] for m in spec["jobs"]["build"]["strategy"]["matrix"]["include"]}
+    assert labels == {
+        "linux-x86_64", "windows-x86_64", "macos-x86_64", "macos-arm64",
+    }
 
 
 def test_release_workflow_publishes_executables_for_every_platform():
