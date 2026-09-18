@@ -20,6 +20,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--bench", type=Path, help="bench JSON to grade (default: the reference build)")
     parser.add_argument("--list", action="store_true", help="list implemented rounds")
     parser.add_argument("--ui", action="store_true", help="open the graphical workspace")
+    parser.add_argument(
+        "--no-measure", action="store_true",
+        help="skip the measured (rendering) rules and grade on ray geometry only",
+    )
     parser.add_argument("--save-reference", type=Path, help="write the reference build to JSON")
     args = parser.parse_args(argv)
 
@@ -50,6 +54,16 @@ def main(argv: list[str] | None = None) -> int:
 
     report = rnd.grade(bench)
     print(report.format())
+
+    # Measured rules render the image, so they are a separate pass. Headless there
+    # is no reason to skip them; in the workspace they run behind Run.
+    if rnd.has_measured_rules and not args.no_measure:
+        print()
+        print("-- measured from the rendered image --")
+        measured = rnd.measure_image(bench)
+        print(measured.format())
+        report.results.extend(measured.results)
+
     print()
     if report.passed:
         print("ROUND PASSED")

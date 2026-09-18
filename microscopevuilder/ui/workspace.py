@@ -56,14 +56,21 @@ class ImageWorker(QtCore.QThread):
 
     finished_image = QtCore.Signal(object)
 
-    def __init__(self, bench, s_object: float, spec: RenderSpec):
-        super().__init__()
+    def __init__(self, bench, s_object: float, spec: RenderSpec, round_=None, parent=None):
+        # Parented to the workspace so Qt owns the thread's lifetime. Destroying a
+        # running QThread aborts the process, and a render outliving its window is
+        # not hypothetical -- it is what happens when a player closes the workspace
+        # while an image is being formed.
+        super().__init__(parent)
         self.bench = bench
         self.s_object = s_object
         self.spec = spec
+        self.round = round_
 
     def run(self) -> None:
-        self.finished_image.emit(render_build(self.bench, self.s_object, self.spec))
+        rendered = render_build(self.bench, self.s_object, self.spec)
+        measured = self.round.measure_image(self.bench) if self.round else None
+        self.finished_image.emit((rendered, measured))
 
 
 class CardPanel(QtWidgets.QWidget):
@@ -226,7 +233,7 @@ class MetricsPanel(QtWidgets.QWidget):
             rendered.intensity, sample_um=rendered.sample_um, cutoff_cycles_per_um=cutoff
         )
 
-    def show_measurements(self, rendered) -> None:
+    def show_measurements(self, rendered, measured=None) -> None:
         optics = rendered.optics
         image = rendered.intensity
         self.summary.setText(optics.describe())
@@ -246,6 +253,20 @@ class MetricsPanel(QtWidgets.QWidget):
             rows.insert(4, ("dominant aberration", f"{dominant[0]} ({dominant[1] * 1000:+.0f} nm)"))
 
         self.table.clear()
+
+        # Measured rules first: they are the round's actual verdict on the image,
+        # and the raw numbers below are the evidence for it.
+        if measured is not None and measured.results:
+            for result in measured.results:
+                node = QtWidgets.QTreeWidgetItem([result.name, result.summary])
+                node.setForeground(0, QtGui.QColor(STATUS_COLORS[result.status]))
+                if result.equation:
+                    node.addChild(QtWidgets.QTreeWidgetItem(["", result.equation]))
+                if not result.ok and result.remedy:
+                    node.addChild(QtWidgets.QTreeWidgetItem(["", f"remedy: {result.remedy}"]))
+                self.table.addTopLevelItem(node)
+                node.setExpanded(not result.ok)
+
         for label, value in rows:
             self.table.addTopLevelItem(QtWidgets.QTreeWidgetItem([label, value]))
 
@@ -471,9 +492,21 @@ class Workspace(QtWidgets.QMainWindow):
             detector_name=self._detector_name(),
             exposure_photons=2000.0,
         )
-        self.worker = ImageWorker(self.bench, self.round.s_object, spec)
+        self.worker = ImageWorker(self.bench, self.round.s_object, spec, self.round, self)
         self.worker.finished_image.connect(self._on_image)
         self.worker.start()
+
+    def closeEvent(self, event) -> None:
+        """Wait for any render in flight before the window goes away.
+
+        A QThread whose owning widget has been destroyed is a crash: the worker
+        finishes, emits into a deleted receiver, and takes the process with it.
+        Closing the workspace mid-render is an ordinary thing for a player to do.
+        """
+        if self.worker is not None and self.worker.isRunning():
+            self.worker.requestInterruption()
+            self.worker.wait(5_000)
+        super().closeEvent(event)
 
     def _detector_name(self) -> str:
         for candidate in ("sensor", "screen", "intermediate_image"):
@@ -481,10 +514,18 @@ class Workspace(QtWidgets.QMainWindow):
                 return candidate
         return self.bench.elements[-1].name
 
-    def _on_image(self, rendered) -> None:
+    def _on_image(self, result) -> None:
+        rendered, measured = result
         self.scope.show_image(rendered.intensity)
-        self.metrics_panel.show_measurements(rendered)
-        self.statusBar().showMessage(f"image formed at {rendered.optics.describe()}")
+        self.metrics_panel.show_measurements(rendered, measured)
+        message = f"image formed at {rendered.optics.describe()}"
+        if measured is not None and measured.results:
+            failures = len(measured.failures())
+            message += (
+                "   |   measured rules: all pass" if not failures
+                else f"   |   {failures} measured check(s) failing"
+            )
+        self.statusBar().showMessage(message)
 
 
 def launch(round_number: int = 2) -> int:

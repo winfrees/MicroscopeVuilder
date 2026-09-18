@@ -213,6 +213,60 @@ astigmatism_rms_um = 0.014
 field_curvature_sag_um = 0.3
 chromatic_focus_fraction = 4e-05
 
+# --- Achromat (NOT plan) -----------------------------------------------------
+#
+# The contrast case for round 7. A plain achromat is corrected on axis much as a
+# plan achromat is, but nothing flattens the field: the Petzval sum is left alone,
+# so the corner focus sits tens of microns from the centre focus. At NA 0.4 the
+# depth of focus is 1.7 um, so a 25 um sag means the corners cannot be brought into
+# focus at the same time as the centre -- which is exactly what a plan design buys
+# and what its price pays for.
+
+[objectives.cfi_achro_10x]
+label = "CFI Achromat 10x/0.25"
+magnification = 10.0
+na = 0.25
+working_distance_mm = 6.5
+immersion = "air"
+grade = "achromat"
+verified = false
+[objectives.cfi_achro_10x.aberrations]
+source = "pedagogical"
+spherical_rms_um = 0.024
+astigmatism_rms_um = 0.020
+field_curvature_sag_um = 30.0
+chromatic_focus_fraction = 5.0e-4
+
+[objectives.cfi_achro_20x]
+label = "CFI Achromat 20x/0.40"
+magnification = 20.0
+na = 0.40
+working_distance_mm = 3.0
+immersion = "air"
+grade = "achromat"
+verified = false
+[objectives.cfi_achro_20x.aberrations]
+source = "pedagogical"
+spherical_rms_um = 0.028
+astigmatism_rms_um = 0.024
+field_curvature_sag_um = 25.0
+chromatic_focus_fraction = 5.0e-4
+
+[objectives.cfi_achro_40x]
+label = "CFI Achromat 40x/0.65"
+magnification = 40.0
+na = 0.65
+working_distance_mm = 0.6
+immersion = "air"
+grade = "achromat"
+verified = false
+[objectives.cfi_achro_40x.aberrations]
+source = "pedagogical"
+spherical_rms_um = 0.032
+astigmatism_rms_um = 0.028
+field_curvature_sag_um = 20.0
+chromatic_focus_fraction = 5.0e-4
+
 # --- immersion media ---------------------------------------------------------
 
 [media.air]

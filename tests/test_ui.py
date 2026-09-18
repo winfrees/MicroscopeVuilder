@@ -24,6 +24,28 @@ def app():
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 
+@pytest.fixture
+def workspace(app):
+    """A workspace that is kept alive and shut down cleanly.
+
+    Letting the window be collected while a render is in flight destroys a running
+    QThread, which aborts the process rather than failing a test.
+    """
+    windows = []
+
+    def make(number: int) -> Workspace:
+        window = Workspace(number)
+        windows.append(window)
+        return window
+
+    yield make
+
+    for window in windows:
+        window.close()
+        window.deleteLater()
+    QtWidgets.QApplication.processEvents()
+
+
 # --- projection, no Qt needed ------------------------------------------------
 
 
@@ -146,14 +168,14 @@ def test_scene_renders_to_an_image_without_error(app, tmp_path):
 # --- the window --------------------------------------------------------------
 
 
-def test_workspace_opens_on_a_passing_reference_build(app):
-    w = Workspace(2)
+def test_workspace_opens_on_a_passing_reference_build(workspace, app):
+    w = workspace(2)
     assert w.report_panel.headline.text() == "ROUND PASSED"
     assert w.report_panel.list.topLevelItemCount() == len(w.round.grade(w.bench).results)
 
 
-def test_workspace_scorecard_tracks_an_edit(app):
-    w = Workspace(2)
+def test_workspace_scorecard_tracks_an_edit(workspace, app):
+    w = workspace(2)
     w.bench.move("eyepiece", 300.0)
     w.refresh_live()
     assert "failing" in w.report_panel.headline.text()
@@ -162,8 +184,8 @@ def test_workspace_scorecard_tracks_an_edit(app):
     assert w.report_panel.headline.text() == "ROUND PASSED"
 
 
-def test_failing_rows_expand_themselves_with_a_remedy(app):
-    w = Workspace(2)
+def test_failing_rows_expand_themselves_with_a_remedy(workspace, app):
+    w = workspace(2)
     w.bench.move("eyepiece", 300.0)
     w.refresh_live()
 
@@ -179,31 +201,31 @@ def test_failing_rows_expand_themselves_with_a_remedy(app):
     assert any(t.startswith("remedy:") for t in texts)
 
 
-def test_status_line_explains_an_afocal_system_rather_than_going_quiet(app):
+def test_status_line_explains_an_afocal_system_rather_than_going_quiet(workspace, app):
     # A visual scope sends collimated light to the eye, so there IS no finite
     # image plane. Reporting nothing would read as a bug.
-    w = Workspace(2)
+    w = workspace(2)
     assert "afocal" in w.statusBar().currentMessage()
 
 
-def test_status_line_reports_the_image_plane_when_one_exists(app):
-    w = Workspace(1)
+def test_status_line_reports_the_image_plane_when_one_exists(workspace, app):
+    w = workspace(1)
     message = w.statusBar().currentMessage()
     assert "image at s = 300.00 mm" in message
     assert "M = 5.00x" in message
 
 
-def test_scope_view_accepts_a_synthesized_image(app):
+def test_scope_view_accepts_a_synthesized_image(workspace, app):
     from microscopevuilder.imaging.build_optics import resolve_build_optics
     from microscopevuilder.imaging.synthesis import RenderedImage
 
-    w = Workspace(1)
+    w = workspace(1)
     bench = w.bench
     optics = resolve_build_optics(bench, w.round.s_object, "screen", 0.5461)
     rendered = RenderedImage(
         np.random.default_rng(0).random((64, 64)), 0.1, optics, []
     )
-    w._on_image(rendered)
+    w._on_image((rendered, None))
     assert w.scope.pixmap() is not None
     assert w.scope.pixmap().width() == 64
     assert w.metrics_panel.table.topLevelItemCount() > 0
@@ -225,7 +247,8 @@ def test_image_worker_renders_the_actual_bench_off_thread(app):
     app.processEvents()
 
     assert received
-    rendered = received[0]
+    rendered, measured = received[0]
+    assert measured is None  # no round passed to the worker
     assert rendered.intensity.shape == (128, 128)
     assert rendered.intensity.min() >= 0.0
     # The point of M10: the render knows which objective it went through.
@@ -233,8 +256,8 @@ def test_image_worker_renders_the_actual_bench_off_thread(app):
     assert rendered.optics.na == pytest.approx(0.75)
 
 
-def test_running_a_test_populates_the_measurements_panel(app):
-    w = Workspace(11)
+def test_running_a_test_populates_the_measurements_panel(workspace, app):
+    w = workspace(11)
     w.run_test()
     assert w.worker.wait(60_000)
     app.processEvents()
@@ -248,9 +271,9 @@ def test_running_a_test_populates_the_measurements_panel(app):
     assert "pedagogical" in w.metrics_panel.provenance.text()
 
 
-def test_the_measurements_panel_names_its_aberration_provenance(app):
+def test_the_measurements_panel_names_its_aberration_provenance(workspace, app):
     # A student must never mistake a teaching budget for a datasheet value.
-    w = Workspace(11)
+    w = workspace(11)
     w.run_test()
     assert w.worker.wait(60_000)
     app.processEvents()
@@ -260,8 +283,8 @@ def test_the_measurements_panel_names_its_aberration_provenance(app):
 # --- the white card ----------------------------------------------------------
 
 
-def test_workspace_can_place_and_clear_cards(app):
-    w = Workspace(2)
+def test_workspace_can_place_and_clear_cards(workspace, app):
+    w = workspace(2)
     assert "place a card" in w.card_panel.reading.text()
 
     w.add_card(193.6)
@@ -273,9 +296,9 @@ def test_workspace_can_place_and_clear_cards(app):
     assert "place a card" in w.card_panel.reading.text()
 
 
-def test_placing_a_card_does_not_change_the_scorecard(app):
+def test_placing_a_card_does_not_change_the_scorecard(workspace, app):
     # The probe must be invisible to the rules, or players will learn to game it.
-    w = Workspace(2)
+    w = workspace(2)
     before = w.report_panel.headline.text()
     rows_before = w.report_panel.list.topLevelItemCount()
     w.add_card(120.0)
@@ -283,8 +306,8 @@ def test_placing_a_card_does_not_change_the_scorecard(app):
     assert w.report_panel.list.topLevelItemCount() == rows_before
 
 
-def test_card_panel_lists_the_planes_it_found(app):
-    w = Workspace(2)
+def test_card_panel_lists_the_planes_it_found(workspace, app):
+    w = workspace(2)
     w.add_card(100.0)
     labels = [
         w.card_panel.planes.topLevelItem(i).text(0)
@@ -315,24 +338,24 @@ def test_a_card_is_drawn_in_the_scene(app):
 # --- illumination stands -----------------------------------------------------
 
 
-def test_illumination_rounds_open_without_tracing_backwards(app):
+def test_illumination_rounds_open_without_tracing_backwards(workspace, app):
     # The lamp, collector and diaphragms all sit upstream of the specimen, which
     # is the object plane for the imaging trace. Sampling the whole bench from the
     # specimen tried to trace backwards and threw.
     for number in (3, 4, 5):
-        w = Workspace(number)
+        w = workspace(number)
         assert w.report_panel.list.topLevelItemCount() > 0
 
 
-def test_the_illumination_path_is_traced_as_its_own_ray_set(app):
-    w = Workspace(4)
+def test_the_illumination_path_is_traced_as_its_own_ray_set(workspace, app):
+    w = workspace(4)
     labels = {r.label for r in w.scene.model.rays}
     assert "illumination_axial" in labels
     assert "marginal" in labels
 
 
-def test_illumination_and_imaging_paths_toggle_independently(app):
-    w = Workspace(4)
+def test_illumination_and_imaging_paths_toggle_independently(workspace, app):
+    w = workspace(4)
     both = len(w.scene.items())
     w._toggle_illumination(False)
     imaging_only = len(w.scene.items())
@@ -341,9 +364,9 @@ def test_illumination_and_imaging_paths_toggle_independently(app):
     assert neither < imaging_only < both
 
 
-def test_a_card_upstream_of_the_specimen_explains_itself(app):
+def test_a_card_upstream_of_the_specimen_explains_itself(workspace, app):
     # Rather than raising out of the panel, say what is wrong.
-    w = Workspace(4)
+    w = workspace(4)
     w.add_card(50.0)
     assert "upstream of the specimen" in w.card_panel.reading.text()
 
@@ -361,8 +384,8 @@ def test_reading_a_card_upstream_of_the_object_raises_clearly():
 
 
 @pytest.mark.parametrize("number", [9, 10])
-def test_epi_rounds_open_and_draw(app, number):
-    w = Workspace(number)
+def test_epi_rounds_open_and_draw(workspace, app, number):
+    w = workspace(number)
     assert w.report_panel.headline.text() == "ROUND PASSED"
     labels = {r.label for r in w.scene.model.rays}
     assert "illumination_axial" in labels and "marginal" in labels
@@ -373,8 +396,8 @@ def test_epi_rounds_open_and_draw(app, number):
     painter.end()
 
 
-def test_illumination_rays_on_an_arm_are_tagged_with_that_arm(app):
-    w = Workspace(9)
+def test_illumination_rays_on_an_arm_are_tagged_with_that_arm(workspace, app):
+    w = workspace(9)
     illumination = [r for r in w.scene.model.rays if r.label.startswith("illumination")]
     assert illumination
     assert all(r.arm == "epi" for r in illumination)
@@ -396,8 +419,8 @@ def test_arm_elements_are_placed_off_the_main_axis(app):
 
 
 @pytest.mark.parametrize("number", [0, 11, 12])
-def test_infinity_and_sandbox_rounds_open(app, number):
-    w = Workspace(number)
+def test_infinity_and_sandbox_rounds_open(workspace, app, number):
+    w = workspace(number)
     assert w.report_panel.list.topLevelItemCount() > 0
     image = QtGui.QImage(700, 350, QtGui.QImage.Format_ARGB32)
     painter = QtGui.QPainter(image)
@@ -405,8 +428,39 @@ def test_infinity_and_sandbox_rounds_open(app, number):
     painter.end()
 
 
-def test_a_turret_draws_every_objective_even_the_ones_out_of_the_path(app):
+def test_a_turret_draws_every_objective_even_the_ones_out_of_the_path(workspace, app):
     # They are fitted; the renderer should show them, and only the trace ignores them.
-    w = Workspace(12)
+    w = workspace(12)
     items = [i for i in w.scene.items() if isinstance(i, ElementItem)]
     assert sum(1 for i in items if "objective" in i.name) == 3
+
+
+# --- measured rounds ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("number", [6, 7, 8])
+def test_measured_rounds_open_and_run(workspace, app, number):
+    w = workspace(number)
+    assert w.report_panel.list.topLevelItemCount() > 0
+    w.run_test()
+    assert w.worker.wait(120_000)
+    app.processEvents()
+    assert "measured rules" in w.statusBar().currentMessage()
+
+
+def test_measured_rule_rows_appear_above_the_raw_numbers(workspace, app):
+    # The rules are the verdict; the raw measurements are the evidence for it.
+    w = workspace(7)
+    w.run_test()
+    assert w.worker.wait(120_000)
+    app.processEvents()
+    assert w.metrics_panel.table.topLevelItem(0).text(0) == "Field flatness"
+
+
+def test_a_geometry_only_round_shows_no_measured_verdict(workspace, app):
+    w = workspace(11)
+    w.run_test()
+    assert w.worker.wait(120_000)
+    app.processEvents()
+    assert "measured rules" not in w.statusBar().currentMessage()
+    assert w.metrics_panel.table.topLevelItem(0).text(0) == "Michelson contrast"

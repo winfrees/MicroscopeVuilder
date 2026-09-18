@@ -14,6 +14,11 @@ from typing import Callable
 
 from ..bench.bench import Arm, Bench, BenchElement
 from ..rules.base import RuleReport
+from ..rules.measured import (
+    check_chromatic_focus,
+    check_field_flatness,
+    check_sensor_matches_the_optics,
+)
 from ..rules.tolerances import (
     MAGNIFICATION_TOLERANCE,
     field_conjugate_tolerance_mm,
@@ -40,6 +45,7 @@ from ..rules.checks import (
     check_optical_tube_length,
     check_relaxed_eye,
     check_resolution,
+    check_sampling,
     condenser_na,
 )
 
@@ -56,12 +62,25 @@ class Round:
     wavelength_um: float
     evaluate: Callable[[Bench], RuleReport]
     reference_build: Callable[[], Bench]
+    # Measured rules render the image, which costs tenths of a second, so they run
+    # on Run rather than on every drag. Rounds that only need ray geometry leave
+    # this None and stay entirely on the live clock.
+    measure: Callable[[Bench], RuleReport] | None = None
     parts_budget: int = 99
     available_kinds: tuple[str, ...] = ()
     notes: str = ""
 
     def grade(self, bench: Bench) -> RuleReport:
+        """The live pass: ray geometry only, fast enough for every drag."""
         return self.evaluate(bench)
+
+    def measure_image(self, bench: Bench) -> RuleReport:
+        """The measured pass: renders, so it runs on Run."""
+        return self.measure(bench) if self.measure else RuleReport()
+
+    @property
+    def has_measured_rules(self) -> bool:
+        return self.measure is not None
 
 
 # --- round 1: the loupe ------------------------------------------------------
@@ -867,6 +886,209 @@ ROUND_12 = Round(
 )
 
 
+# --- rounds 6-8: what only the image can tell you ----------------------------
+#
+# These three are graded on measurements taken from the rendered picture, not on
+# ray geometry, so each carries a `measure` pass alongside its live `evaluate`.
+# They share the infinity stand from round 11's family, because by this point the
+# player has a working scope and is choosing components for it rather than
+# rebuilding the light path.
+
+ROUND6_TEST_PERIOD_UM = 1.2
+# Mid-band, well inside the cutoff. Measured near the cutoff the ratio is noise:
+# see check_field_flatness for the numbers that forced this choice.
+ROUND7_TEST_PERIOD_UM = 2.5
+CAMERA_PIXEL_UM = 6.5  # a very common scientific CMOS pixel
+
+
+def _component_stand(
+    catalog_key: str,
+    na: float,
+    magnification: float = 20.0,
+    grade: str = "plan_apochromat",
+    pixel_um: float = CAMERA_PIXEL_UM,
+    extra_magnification: float = 1.0,
+) -> Bench:
+    """An infinity stand whose objective is a named catalog part."""
+    f_obj = CFI_TUBE_F / magnification
+    tube_f = CFI_TUBE_F * extra_magnification
+    tube_s = INF_TUBE_LENS_S
+    return Bench(
+        [
+            BenchElement("specimen", INF_SPECIMEN_S, "field_stop", 12.0, label="specimen"),
+            BenchElement(
+                "objective", INF_SPECIMEN_S + f_obj, "objective", 6.0, f_obj,
+                label=catalog_key, catalog_key=catalog_key,
+                metadata={"na": na, "magnification": magnification, "grade": grade,
+                          "parfocal_mm": CFI_PARFOCAL},
+            ),
+            BenchElement("tube_lens", tube_s, "tube_lens", 13.0, tube_f,
+                         label=f"tube lens f = {tube_f:.0f} mm"),
+            BenchElement("sensor", tube_s + tube_f, "detector", 11.0, label="camera",
+                         metadata={"pixel_um": pixel_um}),
+        ]
+    )
+
+
+def _round6_evaluate(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    objective = bench.get("objective")
+    na = float(objective.metadata.get("na", 0.4))
+    magnification = float(objective.metadata.get("magnification", 20.0))
+    report.add(check_infinity_space(bench, INF_SPECIMEN_S, "objective"))
+    report.add(
+        check_image_lands_on_detector(
+            bench, INF_SPECIMEN_S, "sensor",
+            image_side_depth_of_focus_mm(0.5461, na, magnification),
+        )
+    )
+    return report
+
+
+def _round6_measure(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    report.add(check_chromatic_focus(bench, INF_SPECIMEN_S, "sensor"))
+    return report
+
+
+def _round6_reference() -> Bench:
+    # A plan apochromat: three wavelengths to a common focus, so the F-to-C band
+    # fits inside the depth of focus.
+    return _component_stand("cfi_plan_apo_20x", na=0.75, grade="plan_apochromat")
+
+
+ROUND_6 = Round(
+    number=6,
+    title="Colour",
+    brief=(
+        "Image in white light. Every wavelength from F to C must come to focus "
+        "together -- one focus setting that serves the whole band."
+    ),
+    teaches="secondary spectrum, and what separates an achromat from an apochromat",
+    s_object=INF_SPECIMEN_S,
+    wavelength_um=0.5461,
+    evaluate=_round6_evaluate,
+    measure=_round6_measure,
+    reference_build=_round6_reference,
+    parts_budget=4,
+    available_kinds=("objective", "tube_lens", "detector", "field_stop"),
+    notes=(
+        "An achromat's residual secondary spectrum is about f/2000 across the "
+        "visible band. At a 10 mm focal length that is 5 um of focus shift, against "
+        "a depth of focus under 2 um at NA 0.4 -- so blue is soft however you focus."
+    ),
+)
+
+
+def _round7_evaluate(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    objective = bench.get("objective")
+    na = float(objective.metadata.get("na", 0.4))
+    magnification = float(objective.metadata.get("magnification", 20.0))
+    report.add(
+        check_image_lands_on_detector(
+            bench, INF_SPECIMEN_S, "sensor",
+            image_side_depth_of_focus_mm(0.5461, na, magnification),
+        )
+    )
+    report.add(check_infinity_space(bench, INF_SPECIMEN_S, "objective"))
+    return report
+
+
+def _round7_measure(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    report.add(
+        check_field_flatness(bench, INF_SPECIMEN_S, "sensor", ROUND7_TEST_PERIOD_UM)
+    )
+    return report
+
+
+def _round7_reference() -> Bench:
+    return _component_stand("cfi_plan_achro_20x", na=0.40, grade="plan_achromat")
+
+
+ROUND_7 = Round(
+    number=7,
+    title="Flat field",
+    brief=(
+        "Fill the frame. The corners have to be as sharp as the centre -- not "
+        "sharp once you refocus for them, sharp at the same time."
+    ),
+    teaches="field curvature, and what the 'plan' in a plan objective is paying for",
+    s_object=INF_SPECIMEN_S,
+    wavelength_um=0.5461,
+    evaluate=_round7_evaluate,
+    measure=_round7_measure,
+    reference_build=_round7_reference,
+    parts_budget=4,
+    available_kinds=("objective", "tube_lens", "detector", "field_stop"),
+    notes=(
+        "A plain achromat leaves a Petzval sag of tens of microns. The depth of "
+        "focus at NA 0.4 is 1.7 um, so refocusing trades the centre for the corners "
+        "instead of fixing either. A plan design flattens the field optically."
+    ),
+)
+
+
+def _round8_evaluate(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    objective = bench.get("objective")
+    na = float(objective.metadata.get("na", 0.75))
+    magnification = float(objective.metadata.get("magnification", 20.0))
+    pixel_um = float(bench.get("sensor").metadata.get("pixel_um", CAMERA_PIXEL_UM))
+    tube_ratio = (bench.get("tube_lens").focal_length_mm or CFI_TUBE_F) / CFI_TUBE_F
+
+    report.add(
+        check_image_lands_on_detector(
+            bench, INF_SPECIMEN_S, "sensor",
+            image_side_depth_of_focus_mm(0.5461, na, magnification * tube_ratio),
+        )
+    )
+    report.add(check_sampling(0.5461, na, magnification * tube_ratio, pixel_um))
+    return report
+
+
+def _round8_measure(bench: Bench) -> RuleReport:
+    report = RuleReport()
+    pixel_um = float(bench.get("sensor").metadata.get("pixel_um", CAMERA_PIXEL_UM))
+    report.add(
+        check_sensor_matches_the_optics(bench, INF_SPECIMEN_S, "sensor", pixel_um)
+    )
+    return report
+
+
+def _round8_reference() -> Bench:
+    # A 20x/0.75 resolves 0.44 um, which is 8.9 um at the sensor: a 6.5 um pixel
+    # undersamples it. A 1.5x tube-lens changer fixes that without tipping over
+    # into empty magnification.
+    return _component_stand(
+        "cfi_plan_apo_20x", na=0.75, grade="plan_apochromat", extra_magnification=1.5
+    )
+
+
+ROUND_8 = Round(
+    number=8,
+    title="Camera port",
+    brief=(
+        "Put a camera on it. The sensor has to keep what the optics resolved -- "
+        "and no more than that, because extra magnification costs field and light."
+    ),
+    teaches="Nyquist sampling at the sensor, and why empty magnification is a trap",
+    s_object=INF_SPECIMEN_S,
+    wavelength_um=0.5461,
+    evaluate=_round8_evaluate,
+    measure=_round8_measure,
+    reference_build=_round8_reference,
+    parts_budget=4,
+    available_kinds=("objective", "tube_lens", "detector", "field_stop"),
+    notes=(
+        "A 20x/0.75 resolves 0.444 um; at the sensor that is 8.9 um, so Nyquist "
+        "demands pixels no larger than 4.44 um. The 6.5 um pixel on a very common "
+        "scientific CMOS undersamples it, and a 1.5x changer is the usual fix."
+    ),
+)
+
+
 # --- sandbox -----------------------------------------------------------------
 
 
@@ -945,7 +1167,7 @@ def get_round(number: int) -> Round:
 ROUNDS: dict[int, Round] = {
     r.number: r
     for r in (
-        ROUND_1, ROUND_2, ROUND_3, ROUND_4, ROUND_5,
+        ROUND_1, ROUND_2, ROUND_3, ROUND_4, ROUND_5, ROUND_6, ROUND_7, ROUND_8,
         ROUND_9, ROUND_10, ROUND_11, ROUND_12, SANDBOX,
     )
 }

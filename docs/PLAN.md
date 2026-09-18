@@ -268,7 +268,7 @@ Where practical, compare a few benches against a published prescription.
 | M8b | Complex-amplitude contrast: phase, polarization, DIC | **Open**: rounds 13–15. Engine groundwork is done — complex amplitude works and a 0.2 rad phase object is verifiably invisible in brightfield. Needs `optics/jones.py`, phase ring/annulus at the objective BFP, Wollaston shear |
 | M9 | Packaging: one-file executables, published to Releases | **Done**: PyInstaller one-file per platform, built and smoke-tested in CI, attached to a GitHub Release on `v*` tags. Unsigned — noted in the release body |
 | M10 | Close the testing loop on the real bench | **Done**: `imaging/build_optics.py` resolves a bench into its optical state, `imaging/synthesis.py` renders through it, `imaging/metrics.py` measures the result. An achromat and an apochromat now render differently, and the catalog's chromatic term is anchored to the textbook `f/2000` |
-| **M11** | Rounds 6–8: colour, flat field, camera port | Depends on M10 — these are graded on image measurements, not ray geometry |
+| M11 | Rounds 6–8: colour, flat field, camera port | **Done**: graded by a second *measured* pass that renders, alongside the live geometry pass. Non-plan objectives added to the catalog so round 7 has something to contrast against |
 | **M12** | Game shell: parts bin, scoring, progress, specimen library | A player can lose a round on budget, see a star rating, diff against a working build, and resume where they left off |
 | **M13** | Verification and polish | Catalog entries datasheet-checked, ribbon playtested, onboarding and art pass |
 
@@ -309,6 +309,31 @@ estimator reported *infinite* SNR on a photon-starved image (dark pixels quantiz
 zero, so their spread is zero), and an adjacent-pixel-difference estimator counted a
 grating's own modulation as noise, reporting SNR 6 on an image with 4500 photons per
 pixel.
+
+### M11 — measured rounds (done)
+
+Rounds 6–8 introduced a second grading pass. `Round.evaluate` stays on the live
+clock (ray geometry, microseconds, runs on every drag); `Round.measure` renders and
+therefore runs on **Run**, the same two-clock split the workspace already used for
+image synthesis. Rounds that need only geometry leave `measure` unset and pay
+nothing. Headless, `python -m microscopevuilder --round 7` runs both, and
+`--no-measure` grades on geometry alone.
+
+Thresholds stay derived. The colour criterion is "the F-to-C band lands inside the
+depth of focus", which is what colour correction *means* rather than a tolerance
+someone picked; flatness is a measured corner-to-centre MTF ratio; sampling is
+Nyquist at the sensor, with a warning band above it for empty magnification.
+
+Two measurement lessons:
+
+- **A flatness ratio measured near the diffraction cutoff is noise.** At a 1.0 µm
+  period against a 0.85 µm cutoff, a *flat* plan objective read 0.57 and a badly
+  curved one read 0.91 — the ratio inverts, because both numbers are already near
+  zero. The test period moved to mid-band, and the rule now refuses to answer when
+  centre modulation is below 5% rather than answering wrongly.
+- **Round 7 needed non-plan objectives**, which the catalog did not have; every
+  entry was a plan design. Three `achromat`-grade entries were added with Petzval
+  sags of 20–30 µm, 7–31× the depth of focus against the plan designs' 0–3×.
 
 ### M12 — game shell (planned in §3, never built)
 

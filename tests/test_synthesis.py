@@ -156,12 +156,16 @@ def test_field_curvature_only_bites_off_axis():
 
 def test_plan_objectives_hold_their_sag_inside_the_depth_of_focus():
     # What "plan" means. At NA 0.75 the depth of focus is 0.49 um, so a plan design
-    # with a sag of several microns would not be a plan design.
+    # with a sag of several microns would not be a plan design. Scoped to plan
+    # grades: the non-plan entries exist precisely to violate this, and round 7 is
+    # about noticing that they do.
     from microscopevuilder.bench.catalog import load_catalog
     from microscopevuilder.rules.tolerances import depth_of_focus_mm
 
     catalog = load_catalog()
-    for objective in catalog.objectives.values():
+    plan = [o for o in catalog.objectives.values() if o.grade.startswith("plan_")]
+    assert plan
+    for objective in plan:
         dof_um = depth_of_focus_mm(LAMBDA, objective.na) * 1000.0
         assert objective.aberrations.field_curvature_sag_um < 4 * dof_um, objective.key
 
