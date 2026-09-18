@@ -67,6 +67,32 @@ def test_release_workflow_publishes_executables_for_every_platform():
     assert "contents: write" in workflow
 
 
+def test_every_commit_to_main_publishes_a_build():
+    workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "branches: [main]" in workflow
+    assert "build-${GITHUB_RUN_NUMBER}" in workflow
+
+
+def test_main_builds_are_prereleases_so_they_do_not_displace_a_tagged_version():
+    # Otherwise every commit would steal the "Latest release" badge from the
+    # version people are meant to download.
+    workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "prerelease=true" in workflow
+    assert "prerelease=false" in workflow
+    assert "prerelease: ${{ steps.kind.outputs.prerelease }}" in workflow
+
+
+def test_a_hand_triggered_run_builds_without_publishing():
+    workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "if: github.event_name == 'push'" in workflow
+
+
+def test_superseded_main_builds_are_cancelled_but_tagged_releases_are_not():
+    workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "concurrency:" in workflow
+    assert "cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}" in workflow
+
+
 def test_release_workflow_tests_and_smoke_tests_before_publishing():
     workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert "pytest -q" in workflow, "never ship an untested binary"
