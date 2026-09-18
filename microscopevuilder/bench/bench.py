@@ -135,8 +135,30 @@ class Bench:
     # --- optics --------------------------------------------------------------
 
     def to_paraxial(self) -> ParaxialSystem:
-        """Hand the bench to the trace engine. Folds are optically transparent."""
-        return ParaxialSystem([e.to_optical() for e in self.elements])
+        """Hand the bench to the trace engine.
+
+        Folds are optically transparent, and white cards are excluded entirely:
+        they are diagnostic probes, so holding one up must never change the answer
+        it is being used to measure. See :mod:`microscopevuilder.bench.probe`.
+        """
+        return ParaxialSystem(
+            [e.to_optical() for e in self.elements if e.kind != "white_card"]
+        )
+
+    def cards(self) -> list["BenchElement"]:
+        return [e for e in self.elements if e.kind == "white_card"]
+
+    def add_card(self, s: float, name: str | None = None) -> "BenchElement":
+        """Drop a white card on the axis at ``s``."""
+        existing = {e.name for e in self.elements}
+        if name is None:
+            i = 1
+            while f"card_{i}" in existing:
+                i += 1
+            name = f"card_{i}"
+        card = BenchElement(name, s, "white_card", 25.0, None, label="white card")
+        self.add(card)
+        return card
 
     # --- persistence ---------------------------------------------------------
 

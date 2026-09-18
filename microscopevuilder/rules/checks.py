@@ -91,7 +91,13 @@ def check_no_unintended_clipping(
             summary="no aperture-limited bundle to check",
         )
 
-    chief = Ray(field_height_mm, 0.0)
+    chief = system.chief_ray(s_object, field_height_mm)
+    if chief is None:
+        return RuleResult(
+            name="Clear aperture",
+            status=Status.NOT_APPLICABLE,
+            summary="no chief ray: the object plane is imaged onto the aperture stop",
+        )
     worst_name, worst_fill = None, 0.0
     for element, ray in system.trace_profile(marginal, s_object):
         if element.name == stop.name:

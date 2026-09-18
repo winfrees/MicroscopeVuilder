@@ -143,6 +143,20 @@ explanation. This is both the win condition and the tutorial.
 - **Parts bin** with a per-round budget — components cost, so the cheap correct
   solution beats the brute-force one.
 
+### The white card
+
+A diagnostic surface the player can drop anywhere on the axis, mirroring the one
+habit that answers most beginner questions at a real bench: hold a card in the beam
+and look. It reports what would land there — a sharp image and its magnification, an
+evenly filled pupil disc, or a blur with the distance to the nearest image plane.
+
+The card implements the classic diagnostic directly: **the marginal ray crossing the
+axis marks an image (field) plane; the chief ray crossing marks a pupil (aperture)
+plane.** It is a *probe*, excluded from the trace, from stop-finding and from the
+rules, so holding one up never changes the answer it is being used to measure. This
+is how conjugate planes become tangible before round 4 asks the player to reason
+about four of them at once.
+
 ### Testing loop
 1. Choose a **test object** from a library: USAF 1951 target, Siemens star, diatom,
    stained histology section, fluorescent beads, live-cell phase object, mirror-polished

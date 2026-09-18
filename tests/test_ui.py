@@ -212,3 +212,58 @@ def test_image_worker_runs_off_thread_and_returns_an_image(app):
 
     assert received and received[0].shape == (256, 256)
     assert received[0].min() >= 0.0
+
+
+# --- the white card ----------------------------------------------------------
+
+
+def test_workspace_can_place_and_clear_cards(app):
+    w = Workspace(2)
+    assert "place a card" in w.card_panel.reading.text()
+
+    w.add_card(193.6)
+    assert "sharp image" in w.card_panel.reading.text()
+    assert len(w.bench.cards()) == 1
+
+    w.clear_cards()
+    assert not w.bench.cards()
+    assert "place a card" in w.card_panel.reading.text()
+
+
+def test_placing_a_card_does_not_change_the_scorecard(app):
+    # The probe must be invisible to the rules, or players will learn to game it.
+    w = Workspace(2)
+    before = w.report_panel.headline.text()
+    rows_before = w.report_panel.list.topLevelItemCount()
+    w.add_card(120.0)
+    assert w.report_panel.headline.text() == before
+    assert w.report_panel.list.topLevelItemCount() == rows_before
+
+
+def test_card_panel_lists_the_planes_it_found(app):
+    w = Workspace(2)
+    w.add_card(100.0)
+    labels = [
+        w.card_panel.planes.topLevelItem(i).text(0)
+        for i in range(w.card_panel.planes.topLevelItemCount())
+    ]
+    assert any("image" in x for x in labels)
+    assert any("pupil" in x for x in labels)
+
+
+def test_a_card_is_drawn_in_the_scene(app):
+    rnd = get_round(2)
+    bench = rnd.reference_build()
+    scene = BenchScene()
+    scene.set_bench(bench, rnd.s_object)
+    before = len([i for i in scene.items() if isinstance(i, ElementItem)])
+
+    bench.add_card(120.0)
+    scene.set_bench(bench, rnd.s_object)
+    after = [i for i in scene.items() if isinstance(i, ElementItem)]
+    assert len(after) == before + 1
+
+    image = QtGui.QImage(400, 200, QtGui.QImage.Format_ARGB32)
+    painter = QtGui.QPainter(image)
+    scene.render(painter)
+    painter.end()

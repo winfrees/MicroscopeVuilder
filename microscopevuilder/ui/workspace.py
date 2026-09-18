@@ -15,6 +15,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..bench.bench import Bench
+from ..bench.probe import find_planes, read_card
 from ..game.rounds import Round, get_round
 from ..imaging.specimens import amplitude_bars, phase_disc
 from ..optics.coherence import image_partially_coherent
@@ -50,6 +51,55 @@ class ImageWorker(QtCore.QThread):
         else:
             specimen = amplitude_bars(n, dx, period_um=max(dx * 8, 1.0))
         self.finished_image.emit(image_partially_coherent(specimen, grid, self.coherence))
+
+
+class CardPanel(QtWidgets.QWidget):
+    """What the white card shows, and where the planes actually are.
+
+    The point of the card is that the player finds the planes by looking, so this
+    panel reports the reading in the same words a demonstrator would use, and lists
+    the image and pupil planes it has found rather than making the player hunt.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QtWidgets.QVBoxLayout(self)
+        self.reading = QtWidgets.QLabel("place a card on the axis (Add card)")
+        self.reading.setWordWrap(True)
+        self.reading.setStyleSheet("font-size: 13px;")
+        layout.addWidget(self.reading)
+
+        self.detail = QtWidgets.QLabel("")
+        self.detail.setWordWrap(True)
+        self.detail.setStyleSheet("color: #9aa3b0;")
+        layout.addWidget(self.detail)
+
+        layout.addWidget(QtWidgets.QLabel("planes found on this bench:"))
+        self.planes = QtWidgets.QTreeWidget()
+        self.planes.setHeaderLabels(["plane", "s (mm)"])
+        layout.addWidget(self.planes, 1)
+
+    def show_reading(self, bench: Bench, s_object: float) -> None:
+        cards = bench.cards()
+        if not cards:
+            self.reading.setText("place a card on the axis (Add card)")
+            self.detail.setText("")
+        else:
+            card = cards[-1]
+            r = read_card(bench, s_object, card.s)
+            self.reading.setText(r.describe())
+            self.detail.setText(
+                f"marginal height {r.marginal_height_mm:.3f} mm   |   "
+                f"chief height {r.chief_height_mm:.3f} mm\n"
+                "the marginal ray crossing the axis marks an image plane; "
+                "the chief ray crossing marks a pupil plane"
+            )
+
+        self.planes.clear()
+        found = find_planes(bench, s_object, min(s_object, 0.0), bench.extent() * 1.1 + 10.0)
+        for kind, label in (("image", "image (field)"), ("pupil", "pupil (aperture)")):
+            for s in found[kind]:
+                self.planes.addTopLevelItem(QtWidgets.QTreeWidgetItem([label, f"{s:.2f}"]))
 
 
 class InspectorPanel(QtWidgets.QWidget):
@@ -154,8 +204,11 @@ class Workspace(QtWidgets.QMainWindow):
         self.report_panel = ReportPanel()
         self.scope = ScopeView()
 
+        self.card_panel = CardPanel()
+
         right = QtWidgets.QTabWidget()
         right.addTab(self.report_panel, "scorecard")
+        right.addTab(self.card_panel, "white card")
         right.addTab(self.inspector, "inspector")
         right.addTab(self.scope, "image")
 
@@ -186,6 +239,16 @@ class Workspace(QtWidgets.QMainWindow):
         run.setShortcut("Ctrl+R")
         run.triggered.connect(self.run_test)
         bar.addAction(run)
+
+        add_card = QtGui.QAction("Add card", self)
+        add_card.setShortcut("Ctrl+K")
+        add_card.setToolTip("drop a white card on the axis to see what lands there")
+        add_card.triggered.connect(self.add_card)
+        bar.addAction(add_card)
+
+        clear_cards = QtGui.QAction("Clear cards", self)
+        clear_cards.triggered.connect(self.clear_cards)
+        bar.addAction(clear_cards)
 
         reset = QtGui.QAction("Reference build", self)
         reset.triggered.connect(self.load_reference)
@@ -220,6 +283,7 @@ class Workspace(QtWidgets.QMainWindow):
         """Paraxial pass plus rule report. Budgeted for every drag."""
         report = self.round.grade(self.bench)
         self.report_panel.show_report(report)
+        self.card_panel.show_reading(self.bench, self.round.s_object)
         self.scene.refresh()
         model = self.scene.model
         bits = []
@@ -245,6 +309,20 @@ class Workspace(QtWidgets.QMainWindow):
 
     def _on_element_selected(self, name: str) -> None:
         self.inspector.show_element(self.bench, name)
+
+    def add_card(self, s: float | None = None) -> None:
+        """Drop a card midway along the bench, or at a given position."""
+        if s is None:
+            s = self.bench.extent() * 0.5
+        self.bench.add_card(s)
+        self.scene.set_bench(self.bench, self.round.s_object)
+        self.refresh_live()
+
+    def clear_cards(self) -> None:
+        for card in self.bench.cards():
+            self.bench.remove(card.name)
+        self.scene.set_bench(self.bench, self.round.s_object)
+        self.refresh_live()
 
     def load_reference(self) -> None:
         self.bench = self.round.reference_build()

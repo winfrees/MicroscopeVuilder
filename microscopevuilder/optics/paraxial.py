@@ -198,6 +198,26 @@ class ParaxialSystem:
             return None
         return Ray(0.0, probe.u * stop.semi_diameter / abs(at_stop.y))
 
+    def chief_ray(self, s_object: float, field_height: float) -> Ray | None:
+        """The ray from an off-axis object point through the centre of the stop.
+
+        This is the definition -- not "a ray parallel to the axis at field height",
+        which only coincides with the chief ray when the stop happens to sit at the
+        front focal plane. Getting it wrong moves the pupil planes and understates
+        vignetting, since the chief ray is what marks the edge of the field.
+
+        Solving ``A h + B u = 0`` at the stop gives the launch angle.
+        """
+        stop = self.aperture_stop(s_object)
+        if stop is None:
+            return None
+        a, b = self.between(s_object, stop.s)[0]
+        if abs(b) < 1e-15:
+            # The object plane is imaged onto the stop: every ray from this point
+            # arrives at the same height, so no launch angle can centre it.
+            return None if abs(a * field_height) > 1e-12 else Ray(field_height, 0.0)
+        return Ray(field_height, -a * field_height / b)
+
     def object_space_na(self, s_object: float, n: float = 1.0) -> float:
         """Numerical aperture accepted at the object, ``n sin(u)``.
 

@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..bench.bench import Bench
-from ..optics.paraxial import Ray
 from ..rules.base import RuleReport
 
 
@@ -69,10 +68,11 @@ def build_trace_model(
                 [(s, system.trace(marginal, s_object, s).y) for s in stops],
             )
         )
-    chief = Ray(field_height_mm, 0.0)
-    rays.append(
-        TracedRay("chief", [(s, system.trace(chief, s_object, s).y) for s in stops])
-    )
+    chief = system.chief_ray(s_object, field_height_mm)
+    if chief is not None:
+        rays.append(
+            TracedRay("chief", [(s, system.trace(chief, s_object, s).y) for s in stops])
+        )
 
     image_s = system.image_plane(s_object)
     magnification = (

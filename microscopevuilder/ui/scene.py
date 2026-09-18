@@ -25,6 +25,7 @@ COLOR_CHIEF = QtGui.QColor("#3a8fe8")
 COLOR_LENS = QtGui.QColor("#7fc7d9")
 COLOR_STOP = QtGui.QColor("#c05a5a")
 COLOR_DETECTOR = QtGui.QColor("#9b8ac4")
+COLOR_CARD = QtGui.QColor("#eceff4")
 COLOR_FIELD_SET = QtGui.QColor("#3a8fe8")
 COLOR_APERTURE_SET = QtGui.QColor("#e8833a")
 
@@ -38,6 +39,7 @@ KIND_COLORS = {
     "aperture_stop": COLOR_STOP,
     "field_stop": COLOR_STOP,
     "detector": COLOR_DETECTOR,
+    "white_card": COLOR_CARD,
 }
 
 
@@ -79,6 +81,12 @@ class ElementItem(QtWidgets.QGraphicsItem):
             path.quadTo(bulge, 0, 0, half)
             path.quadTo(-bulge, 0, 0, -half)
             painter.drawPath(path)
+        elif element.kind == "white_card":
+            # A card is a solid surface across the beam: draw it filled, because
+            # that is what it does -- it intercepts.
+            painter.setBrush(QtGui.QBrush(COLOR_CARD))
+            painter.setOpacity(0.85)
+            painter.drawRect(QtCore.QRectF(-0.8, -half, 1.6, 2 * half))
         else:
             # A stop: two jaws leaving the clear aperture open between them.
             jaw = max(half * 0.45, 1.0)
