@@ -21,6 +21,13 @@ from ..imaging import metrics
 from ..game.progress import Progress
 from ..game.rounds import PREREQUISITES
 from ..game.scoring import check_parts_budget, diff_against_reference, score_round
+from ..rules.tolerances import (
+    FORGIVING_FRACTION,
+    TolerancePolicy,
+    set_tolerance_policy,
+    tolerance_policy,
+)
+from .ruler import IMPERIAL_STEPS_MM, METRIC_STEPS_MM, to_display
 from ..imaging.specimens import SPECIMEN_LIBRARY
 from ..imaging.synthesis import RenderSpec, render_build
 from ..rules.base import RuleReport, Status
@@ -126,7 +133,15 @@ class CardPanel(QtWidgets.QWidget):
 
 
 class InspectorPanel(QtWidgets.QWidget):
-    """Properties of the selected element."""
+    """Properties of the selected element, and a way to type its position.
+
+    The spin box is the reliable way to place a component. Dragging, even zoomed
+    and snapped, is still a hand on a mouse; typing 380.00 is exact, and for a
+    player who has worked out where something belongs that should not be the hard
+    part of the round.
+    """
+
+    positionEdited = QtCore.Signal(str, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -134,18 +149,64 @@ class InspectorPanel(QtWidgets.QWidget):
         self.title = QtWidgets.QLabel("nothing selected")
         self.title.setStyleSheet("font-weight: 600;")
         layout.addRow(self.title)
+
+        self.current_name: str | None = None
+        self.unit = "mm"
+
+        self.position_spin = QtWidgets.QDoubleSpinBox()
+        self.position_spin.setDecimals(3)
+        self.position_spin.setRange(-10_000.0, 10_000.0)
+        self.position_spin.setSingleStep(0.1)
+        self.position_spin.setSuffix(" mm")
+        self.position_spin.setKeyboardTracking(False)
+        self.position_spin.setToolTip("type an exact position along the axis")
+        self.position_spin.valueChanged.connect(self._emit_position)
+        layout.addRow("position", self.position_spin)
+
         self.fields: dict[str, QtWidgets.QLabel] = {}
-        for key in ("kind", "position", "focal length", "semi-diameter", "power", "catalog"):
+        for key in ("kind", "focal length", "semi-diameter", "power", "catalog"):
             label = QtWidgets.QLabel("--")
             self.fields[key] = label
             layout.addRow(key, label)
 
+    def set_unit(self, unit: str) -> None:
+        from .ruler import MM_PER_INCH
+
+        self.unit = unit
+        self.position_spin.blockSignals(True)
+        if unit == "in":
+            self.position_spin.setSuffix(" in")
+            self.position_spin.setDecimals(4)
+            self.position_spin.setSingleStep(0.005)
+        else:
+            self.position_spin.setSuffix(" mm")
+            self.position_spin.setDecimals(3)
+            self.position_spin.setSingleStep(0.1)
+        self.position_spin.blockSignals(False)
+
+    def _to_display(self, mm: float) -> float:
+        from .ruler import MM_PER_INCH
+
+        return mm / MM_PER_INCH if self.unit == "in" else mm
+
+    def _from_display(self, value: float) -> float:
+        from .ruler import MM_PER_INCH
+
+        return value * MM_PER_INCH if self.unit == "in" else value
+
+    def _emit_position(self, value: float) -> None:
+        if self.current_name:
+            self.positionEdited.emit(self.current_name, self._from_display(value))
+
     def show_element(self, bench: Bench, name: str) -> None:
         e = bench.get(name)
+        self.current_name = name
         self.title.setText(e.label or e.name)
         f = e.focal_length_mm
         self.fields["kind"].setText(e.kind)
-        self.fields["position"].setText(f"s = {e.s:.2f} mm")
+        self.position_spin.blockSignals(True)
+        self.position_spin.setValue(self._to_display(e.s))
+        self.position_spin.blockSignals(False)
         self.fields["focal length"].setText("--" if f is None else f"{f:.3g} mm")
         self.fields["semi-diameter"].setText(f"{e.semi_diameter_mm:.3g} mm")
         self.fields["power"].setText("--" if not f else f"{1000.0 / f:.3g} dioptres")
@@ -306,6 +367,7 @@ class Workspace(QtWidgets.QMainWindow):
     def __init__(self, round_number: int = 2, parent=None):
         super().__init__(parent)
         from .scene import BenchScene  # imported late so geometry stays Qt-free
+        from .view import BenchView
 
         self.round: Round = get_round(round_number)
         self.bench: Bench = self.round.reference_build()
@@ -315,9 +377,9 @@ class Workspace(QtWidgets.QMainWindow):
 
         self.setWindowTitle(f"MicroscopeVuilder -- round {self.round.number}: {self.round.title}")
         self.scene = BenchScene(self)
-        self.view = QtWidgets.QGraphicsView(self.scene)
-        self.view.setRenderHint(QtGui.QPainter.Antialiasing)
-        self.view.setDragMode(QtWidgets.QGraphicsView.RubberBandDrag)
+        self.view = BenchView(self.scene)
+        self.view.scaleChanged.connect(self._on_scale_changed)
+        self.scene.snapReadout.connect(self._on_snap_readout)
 
         self.inspector = InspectorPanel()
         self.report_panel = ReportPanel()
@@ -350,6 +412,7 @@ class Workspace(QtWidgets.QMainWindow):
         self.scene.set_bench(self.bench, self.round.s_object)
         self.scene.benchChanged.connect(self.refresh_live)
         self.scene.elementSelected.connect(self._on_element_selected)
+        self.inspector.positionEdited.connect(self._set_element_position)
         self.refresh_live()
         self.resize(1200, 720)
 
@@ -381,6 +444,67 @@ class Workspace(QtWidgets.QMainWindow):
         reset.triggered.connect(self.load_reference)
         bar.addAction(reset)
 
+        bar.addSeparator()
+        for label, shortcut, slot in (
+            ("Zoom in", QtGui.QKeySequence.ZoomIn, lambda: self.view.zoom_in()),
+            ("Zoom out", QtGui.QKeySequence.ZoomOut, lambda: self.view.zoom_out()),
+        ):
+            action = QtGui.QAction(label, self)
+            action.setShortcut(shortcut)
+            action.triggered.connect(slot)
+            bar.addAction(action)
+
+        fit = QtGui.QAction("Fit", self)
+        fit.setShortcut("Ctrl+0")
+        fit.triggered.connect(lambda: self.view.fit_bench())
+        bar.addAction(fit)
+
+        self.zoom_label = QtWidgets.QLabel("  1.0x  ")
+        self.zoom_label.setToolTip("wheel to zoom, shift+wheel to scroll, Ctrl+0 to fit")
+        bar.addWidget(self.zoom_label)
+
+        bar.addSeparator()
+        self.ruler_toggle = QtGui.QAction("Ruler", self, checkable=True, checked=True)
+        self.ruler_toggle.toggled.connect(self._toggle_ruler)
+        bar.addAction(self.ruler_toggle)
+
+        bar.addWidget(QtWidgets.QLabel("  snap: "))
+        self.snap_box = QtWidgets.QComboBox()
+        self.snap_box.setToolTip("hold Alt while dragging to suspend snapping")
+        bar.addWidget(self.snap_box)
+
+        self.plane_snap = QtGui.QAction("Snap to planes", self, checkable=True, checked=True)
+        self.plane_snap.setToolTip(
+            "snap to image, pupil and focal planes -- the positions the round is about"
+        )
+        self.plane_snap.toggled.connect(self._toggle_plane_snap)
+        bar.addAction(self.plane_snap)
+
+        bar.addWidget(QtWidgets.QLabel("  units: "))
+        self.unit_box = QtWidgets.QComboBox()
+        self.unit_box.addItems(["mm", "in"])
+        self.unit_box.currentTextChanged.connect(self._change_unit)
+        bar.addWidget(self.unit_box)
+        self._populate_snap_steps("mm")
+        self.snap_box.currentIndexChanged.connect(self._change_snap_step)
+
+        bar.addSeparator()
+        bar.addWidget(QtWidgets.QLabel("  grading: "))
+        self.tolerance_box = QtWidgets.QComboBox()
+        self.tolerance_box.addItems(
+            [f"practice ({FORGIVING_FRACTION:.0%})", "strict (physical)"]
+        )
+        self.tolerance_box.setToolTip(
+            "practice grades positions at 5% of the position; strict grades at the "
+            "physical depth of focus. The scorecard names both either way."
+        )
+        self.tolerance_box.setCurrentIndex(
+            0 if tolerance_policy() is TolerancePolicy.FORGIVING else 1
+        )
+        self.tolerance_box.currentIndexChanged.connect(self._change_tolerance_policy)
+        bar.addWidget(self.tolerance_box)
+
+        bar.addSeparator()
         help_action = QtGui.QAction("How this works", self)
         help_action.setShortcut("F1")
         help_action.triggered.connect(self.show_help)
@@ -500,6 +624,14 @@ class Workspace(QtWidgets.QMainWindow):
     def _on_element_selected(self, name: str) -> None:
         self.inspector.show_element(self.bench, name)
 
+    def _set_element_position(self, name: str, s: float) -> None:
+        """Typed position: exact, no snapping, no pixel hunting."""
+        if not self.bench.has(name) or abs(self.bench.get(name).s - s) < 1e-9:
+            return
+        self.bench.move(name, s)
+        self.scene.refresh()
+        self.refresh_live()
+
     def add_card(self, s: float | None = None) -> None:
         """Drop a card midway along the bench, or at a given position."""
         if s is None:
@@ -539,6 +671,57 @@ class Workspace(QtWidgets.QMainWindow):
         self.worker = ImageWorker(self.bench, self.round.s_object, spec, self.round, self)
         self.worker.finished_image.connect(self._on_image)
         self.worker.start()
+
+    # --- zoom, ruler and snapping -------------------------------------------
+
+    def _on_scale_changed(self, scale: float) -> None:
+        self.zoom_label.setText(f"  {scale:.2g}x  ")
+
+    def _on_snap_readout(self, text: str) -> None:
+        if text:
+            self.statusBar().showMessage(text)
+
+    def _toggle_ruler(self, on: bool) -> None:
+        self.scene.show_ruler = on
+        self.scene.refresh()
+
+    def _toggle_plane_snap(self, on: bool) -> None:
+        self.scene.snap_to_planes = on
+
+    def _populate_snap_steps(self, unit: str) -> None:
+        steps = METRIC_STEPS_MM if unit == "mm" else IMPERIAL_STEPS_MM
+        self.snap_box.blockSignals(True)
+        self.snap_box.clear()
+        for step in steps:
+            self.snap_box.addItem(to_display(step, unit), step)
+        # Default to the finest metric step: most round targets land on a tenth of
+        # a millimetre, and a 1 mm grid steps straight over them.
+        self.snap_box.setCurrentIndex(len(steps) - 1)
+        self.snap_box.blockSignals(False)
+        self.scene.snap_step_mm = float(self.snap_box.currentData())
+
+    def _change_snap_step(self, index: int) -> None:
+        data = self.snap_box.itemData(index)
+        if data is not None:
+            self.scene.snap_step_mm = float(data)
+
+    def _change_unit(self, unit: str) -> None:
+        self.scene.unit = unit
+        self._populate_snap_steps(unit)
+        self.scene.refresh()
+        self.inspector.set_unit(unit)
+        self._on_element_selected_refresh()
+
+    def _change_tolerance_policy(self, index: int) -> None:
+        set_tolerance_policy(
+            TolerancePolicy.FORGIVING if index == 0 else TolerancePolicy.STRICT
+        )
+        self.refresh_live()
+
+    def _on_element_selected_refresh(self) -> None:
+        selected = self.inspector.current_name
+        if selected and self.bench.has(selected):
+            self.inspector.show_element(self.bench, selected)
 
     def _warn_about_unverified_catalog(self) -> None:
         """Say plainly that the catalog numbers have not been datasheet-checked.
@@ -583,6 +766,12 @@ class Workspace(QtWidgets.QMainWindow):
             "changes nothing; it only measures.</p>"
             "<p><b>Run</b> forms the image your build actually makes and measures it. "
             "Some rounds are graded on those measurements.</p>"
+            "<p><b>Placing things precisely:</b> the wheel zooms, dragging snaps to "
+            "the grid and to optical planes, and Alt suspends snapping. The surest "
+            "way is to type the position in the inspector.</p>"
+            "<p><b>Grading</b> is forgiving by default: positions are accepted "
+            "within 5%. The scorecard always names the physical tolerance too, and "
+            "the toolbar can switch to grading at it.</p>"
         )
         box.exec()
 

@@ -22,6 +22,19 @@ On macOS and Linux, `chmod +x MicroscopeVuilder-*` before the first run. The mac
 and Windows builds are not code-signed, so the first launch needs Right-click → Open
 (macOS) or "More info" → "Run anyway" (Windows).
 
+## Placing components
+
+The bench view zooms (wheel, `Ctrl` `+`/`-`, `Ctrl+0` to fit) and carries a ruler.
+Dragging snaps to a selectable grid and to optical planes — image, pupil and focal
+planes — with `Alt` to suspend snapping. The inspector accepts a typed position,
+which is the exact route. Units switch between millimetres and inches.
+
+Positions are graded within **5%** by default. The physical tolerance is often far
+tighter — on round 11 the depth of focus is 0.19 mm — and the scorecard names it on
+every row, so the number you take away is the one an optical bench would hold you
+to. The toolbar switches grading to that tolerance; `--strict` does the same
+headlessly.
+
 ## Status
 
 Milestones M0–M9 complete: paraxial engine, CFI60 catalog, wavefront and diffraction

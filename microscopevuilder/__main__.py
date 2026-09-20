@@ -29,6 +29,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--progress", type=Path, help="progress file (default: user config dir)")
     parser.add_argument("--diff", action="store_true", help="on failure, diff against a working build")
     parser.add_argument(
+        "--strict", action="store_true",
+        help="grade positions at the physical tolerance instead of the 5% practice one",
+    )
+    parser.add_argument(
         "--verify-catalog", action="store_true",
         help="print which catalog entries still need a datasheet check",
     )
@@ -60,6 +64,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"the workspace needs the 'ui' extra: pip install 'microscopevuilder[ui]' ({exc})")
             return 2
         return launch(args.round)
+
+    if args.strict:
+        from .rules.tolerances import TolerancePolicy, set_tolerance_policy
+
+        set_tolerance_policy(TolerancePolicy.STRICT)
 
     rnd = get_round(args.round)
     bench = Bench.load(args.bench) if args.bench else rnd.reference_build()

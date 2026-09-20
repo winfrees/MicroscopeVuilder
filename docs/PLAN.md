@@ -131,6 +131,27 @@ explanation. This is both the win condition and the tutorial.
 
 ## 3. Game structure
 
+### Placement and grading tolerance
+
+The derived tolerances of M6 turned out to be **finer than the input resolution**.
+On round 11 the depth of focus is 0.19 mm across a 380 mm bench: fitted to a
+760-pixel view that is 0.50 mm per pixel, so a single pixel of drag overshot the
+tolerance by two and a half times. The physics was right and the game was
+unplayable.
+
+Fixed on both sides:
+
+- **Input**: the view zooms (a pixel at 10x is 0.05 mm), a ruler runs under the
+  axis with tick density following the zoom, dragging snaps to a selectable grid
+  *and* to optical planes, and the inspector takes a typed position. The default
+  grid is 0.1 mm — most round targets land on a tenth (17.6, 193.6, 172.6) and a
+  1 mm grid would step straight over them.
+- **Grading**: a `TolerancePolicy` grades positions at the larger of the physical
+  tolerance and 5% of the position. Relaxing never tightens — near the origin 5% is
+  a fraction of a millimetre. Every graded row names the physical tolerance
+  whatever the policy, so a student is never left thinking 5% is what a bench
+  accepts.
+
 ### Workspace
 - Side-elevation **optical bench** view: axis, components as recognizable glyphs,
   drag along `z`, snap to rails, rotate folds. Aperture/field diaphragms are draggable

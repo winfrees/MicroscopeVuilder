@@ -14,7 +14,11 @@ from .base import RuleResult, Status, tolerance_result
 
 
 def check_image_lands_on_detector(
-    bench: Bench, s_object: float, detector_name: str, tolerance_mm: float = 0.05
+    bench: Bench,
+    s_object: float,
+    detector_name: str,
+    tolerance_mm: float = 0.05,
+    note: str = "",
 ) -> RuleResult:
     """Is the image actually in focus where the player put the sensor or eyepoint?"""
     system = bench.to_paraxial()
@@ -47,6 +51,7 @@ def check_image_lands_on_detector(
             f"specimen by roughly {(detector.s - s_img) / 100:.4f} mm"
         ),
         relative=False,
+        note=note,
     )
 
 

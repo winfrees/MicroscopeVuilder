@@ -22,6 +22,8 @@ from ..rules.measured import (
 )
 from ..rules.tolerances import (
     MAGNIFICATION_TOLERANCE,
+    describe_policy,
+    position_tolerance_mm,
     field_conjugate_tolerance_mm,
     image_side_depth_of_focus_mm,
     pupil_conjugate_tolerance_mm,
@@ -55,6 +57,29 @@ from ..rules.checks import (
 )
 
 VISUAL_REFERENCE_DISTANCE_MM = 250.0  # the conventional near point for visual M
+
+
+def _graded_focus(
+    bench: Bench,
+    detector_name: str,
+    na: float,
+    magnification: float,
+    s_object: float = 0.0,
+    wavelength_um: float = 0.5461,
+):
+    """Focus check with the position tolerance routed through the active policy.
+
+    Every round grades focus the same way, so the policy is applied in one place
+    and the scorecard always states both the tolerance being applied and the
+    physical one.
+    """
+    derived = image_side_depth_of_focus_mm(wavelength_um, max(na, 1e-3), magnification)
+    target = bench.get(detector_name).s
+    return check_image_lands_on_detector(
+        bench, s_object, detector_name,
+        position_tolerance_mm(target, derived),
+        note=describe_policy(target, derived),
+    )
 
 
 @dataclass(frozen=True)
@@ -96,8 +121,15 @@ def _round1_evaluate(bench: Bench) -> RuleReport:
     s_obj = -60.0
     # The focus tolerance is the image-side depth of focus, not a chosen number.
     na = bench.to_paraxial().object_space_na(s_obj)
-    focus_tol = image_side_depth_of_focus_mm(0.5461, max(na, 1e-3), 5.0)
-    report.add(check_image_lands_on_detector(bench, s_obj, "screen", tolerance_mm=focus_tol))
+    derived = image_side_depth_of_focus_mm(0.5461, max(na, 1e-3), 5.0)
+    target = bench.get("screen").s
+    report.add(
+        check_image_lands_on_detector(
+            bench, s_obj, "screen",
+            tolerance_mm=position_tolerance_mm(target, derived),
+            note=describe_policy(target, derived),
+        )
+    )
     report.add(
         check_magnification(bench, s_obj, "screen", target=5.0, tolerance=MAGNIFICATION_TOLERANCE)
     )
@@ -150,7 +182,14 @@ def _round2_evaluate(bench: Bench) -> RuleReport:
             tolerance=tube_length_tolerance(MAGNIFICATION_TOLERANCE),
         )
     )
-    report.add(check_image_lands_on_detector(bench, s_obj, "intermediate_image", focus_tol))
+    image_s = bench.get("intermediate_image").s
+    report.add(
+        check_image_lands_on_detector(
+            bench, s_obj, "intermediate_image",
+            position_tolerance_mm(image_s, focus_tol),
+            note=describe_policy(image_s, focus_tol),
+        )
+    )
     report.add(
         check_magnification(
             bench, s_obj, "intermediate_image", target=10.0, tolerance=MAGNIFICATION_TOLERANCE
@@ -586,10 +625,7 @@ def _round9_evaluate(bench: Bench) -> RuleReport:
                        field_conjugate_tolerance_mm(0.5461, 0.25), "the field diaphragm")
     )
     report.add(
-        check_image_lands_on_detector(
-            bench, EPI_SPECIMEN_S, "intermediate_image",
-            image_side_depth_of_focus_mm(0.5461, 0.25, 10.0),
-        )
+        _graded_focus(bench, "intermediate_image", 0.25, 10.0, s_object=EPI_SPECIMEN_S)
     )
     return report
 
@@ -747,12 +783,7 @@ def _round11_evaluate(bench: Bench) -> RuleReport:
     target_m = float(objective.metadata.get("magnification", 20.0))
 
     report.add(check_infinity_space(bench, INF_SPECIMEN_S, "objective"))
-    report.add(
-        check_image_lands_on_detector(
-            bench, INF_SPECIMEN_S, "sensor",
-            image_side_depth_of_focus_mm(0.5461, na, target_m),
-        )
-    )
+    report.add(_graded_focus(bench, "sensor", na, target_m))
     report.add(
         check_magnification(bench, INF_SPECIMEN_S, "sensor", target_m, MAGNIFICATION_TOLERANCE)
     )
@@ -846,10 +877,7 @@ def _round12_evaluate(bench: Bench) -> RuleReport:
         na = float(objective.metadata.get("na", 0.5))
         magnification = float(objective.metadata.get("magnification", 1.0))
 
-        focus = check_image_lands_on_detector(
-            single, INF_SPECIMEN_S, "sensor",
-            image_side_depth_of_focus_mm(0.5461, na, magnification),
-        )
+        focus = _graded_focus(single, "sensor", na, magnification)
         report.add(dataclasses.replace(focus, name=f"Focus [{magnification:.0f}x]"))
 
         mag = check_magnification(
@@ -941,12 +969,7 @@ def _round6_evaluate(bench: Bench) -> RuleReport:
     na = float(objective.metadata.get("na", 0.4))
     magnification = float(objective.metadata.get("magnification", 20.0))
     report.add(check_infinity_space(bench, INF_SPECIMEN_S, "objective"))
-    report.add(
-        check_image_lands_on_detector(
-            bench, INF_SPECIMEN_S, "sensor",
-            image_side_depth_of_focus_mm(0.5461, na, magnification),
-        )
-    )
+    report.add(_graded_focus(bench, "sensor", na, magnification))
     return report
 
 
@@ -990,12 +1013,7 @@ def _round7_evaluate(bench: Bench) -> RuleReport:
     objective = bench.get("objective")
     na = float(objective.metadata.get("na", 0.4))
     magnification = float(objective.metadata.get("magnification", 20.0))
-    report.add(
-        check_image_lands_on_detector(
-            bench, INF_SPECIMEN_S, "sensor",
-            image_side_depth_of_focus_mm(0.5461, na, magnification),
-        )
-    )
+    report.add(_graded_focus(bench, "sensor", na, magnification))
     report.add(check_infinity_space(bench, INF_SPECIMEN_S, "objective"))
     return report
 
@@ -1043,12 +1061,7 @@ def _round8_evaluate(bench: Bench) -> RuleReport:
     pixel_um = float(bench.get("sensor").metadata.get("pixel_um", CAMERA_PIXEL_UM))
     tube_ratio = (bench.get("tube_lens").focal_length_mm or CFI_TUBE_F) / CFI_TUBE_F
 
-    report.add(
-        check_image_lands_on_detector(
-            bench, INF_SPECIMEN_S, "sensor",
-            image_side_depth_of_focus_mm(0.5461, na, magnification * tube_ratio),
-        )
-    )
+    report.add(_graded_focus(bench, "sensor", na, magnification * tube_ratio))
     report.add(check_sampling(0.5461, na, magnification * tube_ratio, pixel_um))
     return report
 

@@ -15,6 +15,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..bench.bench import Bench
 from .geometry import arm_axis_frame, axis_frame, point_at, project
+from .ruler import choose_step, snap, snap_to_planes, ticks, to_display
 from .trace_model import TraceModel, build_trace_model
 
 # Marginal and chief rays are the classic teaching pair, so they get the two
@@ -27,6 +28,8 @@ COLOR_STOP = QtGui.QColor("#c05a5a")
 COLOR_DETECTOR = QtGui.QColor("#9b8ac4")
 COLOR_CARD = QtGui.QColor("#eceff4")
 COLOR_ILLUMINATION = QtGui.QColor("#d9c45a")
+COLOR_RULER = QtGui.QColor("#7a828e")
+COLOR_SNAP = QtGui.QColor("#4fbf78")
 COLOR_FIELD_SET = QtGui.QColor("#3a8fe8")
 COLOR_APERTURE_SET = QtGui.QColor("#e8833a")
 
@@ -100,14 +103,16 @@ class ElementItem(QtWidgets.QGraphicsItem):
 
     def itemChange(self, change, value):
         if change == QtWidgets.QGraphicsItem.ItemPositionChange and self._scene.bench:
-            # Constrain the drag to the axis: only s may change.
-            new_s = self._scene.s_from_scene_x(value.x())
-            return QtCore.QPointF(value.x(), self._scene.y_for_element(self.name))
+            # Constrain the drag to the axis, then snap: only s may change.
+            snapped, captured = self._scene.snap_position(self._scene.s_from_scene_x(value.x()))
+            self._scene.report_snap(self.name, snapped, captured)
+            return QtCore.QPointF(snapped, self._scene.y_for_element(self.name))
         return super().itemChange(change, value)
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
         self._scene.commit_element_move(self.name, self.pos().x())
+        self._scene.report_snap(None, 0.0, False)
 
 
 class BenchScene(QtWidgets.QGraphicsScene):
@@ -115,9 +120,11 @@ class BenchScene(QtWidgets.QGraphicsScene):
 
     benchChanged = QtCore.Signal()
     elementSelected = QtCore.Signal(str)
+    snapReadout = QtCore.Signal(str)
 
     RIBBON_OFFSET_MM = 14.0
     RIBBON_ROW_MM = 4.0
+    RULER_OFFSET_MM = -13.0
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -131,6 +138,13 @@ class BenchScene(QtWidgets.QGraphicsScene):
         self.show_ribbon = True
         self.show_imaging = True
         self.show_illumination = True
+        self.show_ruler = True
+        self.snap_step_mm = 0.1
+        self.snap_to_planes = True
+        self.snapping_enabled = True
+        self.unit = "mm"
+        self.view_scale = 1.0
+        self._snap_readout = ""
         self.setBackgroundBrush(QtGui.QColor("#12151a"))
         self.selectionChanged.connect(self._on_selection)
 
@@ -165,6 +179,8 @@ class BenchScene(QtWidgets.QGraphicsScene):
                 self.removeItem(item)
         self._overlay.clear()
         self._draw_axis()
+        if self.show_ruler:
+            self._draw_ruler()
         if self.show_rays:
             self._draw_rays()
         if self.show_ribbon:
@@ -186,6 +202,55 @@ class BenchScene(QtWidgets.QGraphicsScene):
 
     def s_from_scene_x(self, x: float) -> float:
         return float(x)
+
+    def snap_position(self, s: float) -> tuple[float, bool]:
+        """Apply the active snapping to a dragged position.
+
+        Plane snapping is tried first and wins: getting a sensor onto the plane
+        where the image actually forms is the point of the round, while landing on
+        a round number is only a convenience.
+        """
+        if not self.snapping_enabled:
+            return s, False
+        if self.snap_to_planes:
+            # Capture within a few pixels on screen, so the pull feels the same at
+            # any zoom rather than growing into a shove when zoomed out.
+            capture = 6.0 / max(self.view_scale, 1e-6)
+            snapped, captured = snap_to_planes(s, self.significant_planes(), capture)
+            if captured:
+                return snapped, True
+        return snap(s, self.snap_step_mm), False
+
+    def significant_planes(self) -> list[float]:
+        """Positions worth snapping to: image and pupil planes, and focal planes."""
+        planes: list[float] = []
+        if self.model is not None:
+            planes += [c.s for c in self.model.conjugates]
+            if self.model.image_s is not None:
+                planes.append(self.model.image_s)
+        for element in self.bench.elements if self.bench else []:
+            if element.focal_length_mm:
+                planes.append(element.s + element.focal_length_mm)
+                planes.append(element.s - element.focal_length_mm)
+        return [p for p in planes if p == p]  # drop any NaN
+
+    def report_snap(self, name: str | None, s: float, captured: bool) -> None:
+        text = ""
+        if name is not None:
+            text = f"{name} at {to_display(s, self.unit)}"
+            if captured:
+                text += "  -- snapped to an optical plane"
+            elif self.snapping_enabled:
+                text += f"  (grid {to_display(self.snap_step_mm, self.unit)})"
+        if text != self._snap_readout:
+            self._snap_readout = text
+            self.snapReadout.emit(text)
+
+    def set_view_scale(self, scale: float) -> None:
+        """Told by the view how zoomed in we are, so ruler density can follow."""
+        if abs(scale - self.view_scale) > 1e-9:
+            self.view_scale = scale
+            self.refresh()
 
     def glyph_rotation(self, element) -> float:
         """Degrees to rotate a component glyph so it lies across its own axis."""
@@ -279,6 +344,43 @@ class BenchScene(QtWidgets.QGraphicsScene):
             if ray.label == "marginal":
                 mirrored = [(s, -y) for s, y in ray.samples]
                 self._polyline(self._ray_points(mirrored), color, 1.0)
+
+    def _draw_ruler(self) -> None:
+        """A ruler under the bench, with tick density following the zoom.
+
+        Without this the player has no way to see where a component is, let alone
+        put it somewhere specific.
+        """
+        start = min(self.s_object, 0.0)
+        end = self.bench.extent() * 1.05 + 5.0
+        if end <= start:
+            return
+
+        # Tick spacing is chosen from what is actually visible, so zooming in
+        # reveals finer divisions instead of the same coarse ones stretched out.
+        visible_span = (end - start) / max(self.view_scale, 1e-6)
+        step = choose_step(visible_span)
+        y = self.RULER_OFFSET_MM
+
+        self._polyline(
+            [QtCore.QPointF(start, -y), QtCore.QPointF(end, -y)], COLOR_RULER, 0.4
+        )
+        for tick in ticks(start, end, step, self.unit):
+            height = 2.2 if tick.is_major else 1.1
+            line = QtWidgets.QGraphicsLineItem(
+                tick.position_mm, -y, tick.position_mm, -y + height
+            )
+            pen = QtGui.QPen(COLOR_RULER, 1.2 if tick.is_major else 0.8)
+            pen.setCosmetic(True)
+            line.setPen(pen)
+            self._add(line)
+
+            if tick.label:
+                text = QtWidgets.QGraphicsSimpleTextItem(tick.label)
+                text.setBrush(QtGui.QBrush(COLOR_RULER))
+                text.setPos(tick.position_mm + 0.3, -y + height)
+                text.setScale(0.08)
+                self._add(text)
 
     def _draw_ribbon(self) -> None:
         """Two rows of ticks: the field set and the aperture set.
