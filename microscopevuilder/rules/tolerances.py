@@ -18,7 +18,79 @@ system is being graded, replaces what were arbitrary millimetre figures.
 
 from __future__ import annotations
 
+from enum import Enum
+
 RAYLEIGH_QUARTER_WAVE = 0.25  # waves peak-to-valley
+
+
+class TolerancePolicy(str, Enum):
+    """How strictly a component's *position* is graded.
+
+    The physics does not change between these -- the depth of focus is what it is.
+    What changes is how much slack the game allows before it calls a placement
+    wrong, and the scorecard always reports both numbers so a student is never
+    left thinking a 5% placement is what an optical bench would accept.
+    """
+
+    STRICT = "strict"       # the derived physical tolerance, nothing added
+    FORGIVING = "forgiving"  # the larger of the physical tolerance and 5% of position
+
+
+FORGIVING_FRACTION = 0.05
+
+# Forgiving by default. The derived tolerances are correct and were unusable by
+# hand: on round 11 the depth of focus is 0.19 mm while one pixel of drag at
+# fit-to-window is 0.50 mm, so a single pixel of mouse movement overshot the
+# tolerance by two and a half times. Zoom, the ruler and numeric entry fix the
+# input resolution; this setting exists so the grading is not the thing standing
+# between a player and a round they have understood.
+_policy = TolerancePolicy.FORGIVING
+
+
+def tolerance_policy() -> TolerancePolicy:
+    return _policy
+
+
+def set_tolerance_policy(policy: TolerancePolicy) -> TolerancePolicy:
+    """Set the active policy, returning the previous one so callers can restore it."""
+    global _policy
+    previous = _policy
+    _policy = TolerancePolicy(policy)
+    return previous
+
+
+def position_tolerance_mm(
+    target_mm: float, derived_mm: float, policy: TolerancePolicy | None = None
+) -> float:
+    """How far a component may sit from where it belongs.
+
+    Under FORGIVING this is the *larger* of the physical tolerance and 5% of the
+    position -- never smaller. Relaxing a tolerance must not accidentally tighten
+    one, which it would for a component sitting close to the origin where 5% is a
+    fraction of a millimetre.
+    """
+    policy = policy or tolerance_policy()
+    if policy is TolerancePolicy.STRICT:
+        return derived_mm
+    return max(derived_mm, abs(target_mm) * FORGIVING_FRACTION)
+
+
+def describe_policy(
+    target_mm: float, derived_mm: float, policy: TolerancePolicy | None = None
+) -> str:
+    """A phrase for the scorecard saying which tolerance is being applied, and why.
+
+    Always names the physical figure, even when grading is looser, so the number a
+    student takes away is the one an optical bench would hold them to.
+    """
+    policy = policy or tolerance_policy()
+    applied = position_tolerance_mm(target_mm, derived_mm, policy)
+    if policy is TolerancePolicy.STRICT or applied <= derived_mm:
+        return f"graded at the physical tolerance of {derived_mm:.3f} mm"
+    return (
+        f"graded at a {FORGIVING_FRACTION:.0%} practice tolerance of {applied:.3f} mm; "
+        f"the physical tolerance is {derived_mm:.3f} mm"
+    )
 
 
 def depth_of_focus_mm(wavelength_um: float, na: float) -> float:

@@ -14,6 +14,8 @@ from microscopevuilder.optics.wavefront import defocus_from_stage_error
 from microscopevuilder.rules.base import Status
 from microscopevuilder.rules.tolerances import (
     MAGNIFICATION_TOLERANCE,
+    TolerancePolicy,
+    set_tolerance_policy,
     depth_of_focus_mm,
     field_conjugate_tolerance_mm,
     image_side_depth_of_focus_mm,
@@ -22,6 +24,19 @@ from microscopevuilder.rules.tolerances import (
 )
 
 LAMBDA = 0.5461
+
+
+@pytest.fixture(autouse=True)
+def strict_grading():
+    """These tests are about the derived physical tolerances.
+
+    The game grades positions forgivingly by default, because the derived
+    tolerances were finer than a pixel of drag. This file checks the physics
+    underneath that, so it pins the strict policy.
+    """
+    previous = set_tolerance_policy(TolerancePolicy.STRICT)
+    yield
+    set_tolerance_policy(previous)
 
 
 def _named(report, name):

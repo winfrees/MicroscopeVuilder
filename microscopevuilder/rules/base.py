@@ -89,6 +89,7 @@ def tolerance_result(
     culprit: str | None = None,
     remedy: str = "",
     relative: bool = True,
+    note: str = "",
 ) -> RuleResult:
     """Compare a measurement to a target, with a warn band at twice the tolerance."""
     error = abs(measured - target)
@@ -108,7 +109,7 @@ def tolerance_result(
         name=name,
         status=status,
         summary=summary,
-        equation=equation,
+        equation=equation + (f"; {note}" if note else ""),
         measured=measured,
         target=target,
         units=units,

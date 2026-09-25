@@ -480,7 +480,9 @@ def test_breaking_the_build_drops_the_rating_and_offers_the_diff(workspace, app)
     w = workspace(11)
     assert not w.diff_action.isEnabled()
 
-    w.bench.move("sensor", w.bench.get("sensor").s + 2.0)
+    # Far enough out to fail even the 5% practice tolerance, which is what the
+    # game grades with by default.
+    w.bench.move("sensor", w.bench.get("sensor").s + 40.0)
     w.refresh_live()
     assert "☆☆☆" in w.report_panel.score_line.text()
     assert w.diff_action.isEnabled()
@@ -501,3 +503,140 @@ def test_the_budget_row_appears_on_the_scorecard(workspace, app):
         for i in range(w.report_panel.list.topLevelItemCount())
     ]
     assert "Parts budget" in names
+
+
+# --- zoom, ruler and placement aids ------------------------------------------
+
+
+def test_the_view_zooms_and_reports_its_scale(workspace, app):
+    w = workspace(11)
+    w.view.fit_bench()
+    fitted = w.view.scale_factor
+
+    w.view.zoom_in()
+    assert w.view.scale_factor > fitted
+    assert "x" in w.zoom_label.text()
+    # The scene is told, so ruler density can follow the zoom.
+    assert w.scene.view_scale == pytest.approx(w.view.scale_factor)
+
+    w.view.zoom_out()
+    w.view.zoom_out()
+    assert w.view.scale_factor < fitted
+
+
+def test_zoom_is_clamped_at_both_ends(workspace, app):
+    from microscopevuilder.ui.view import MAX_SCALE, MIN_SCALE
+
+    w = workspace(11)
+    for _ in range(80):
+        w.view.zoom_in()
+    assert w.view.scale_factor == pytest.approx(MAX_SCALE)
+
+    for _ in range(200):
+        w.view.zoom_out()
+    assert w.view.scale_factor == pytest.approx(MIN_SCALE)
+
+
+def test_zooming_in_makes_a_pixel_finer_than_the_tolerance(workspace, app):
+    # The whole point of adding zoom: at fit-to-window one pixel overshoots the
+    # depth of focus, and zoomed in it does not.
+    from microscopevuilder.rules.tolerances import image_side_depth_of_focus_mm
+
+    w = workspace(11)
+    w.view.resize(760, 400)
+    w.view.fit_bench()
+    tolerance = image_side_depth_of_focus_mm(0.5461, 0.75, 20.0)
+
+    mm_per_px_fitted = 1.0 / w.view.scale_factor
+    assert mm_per_px_fitted > tolerance
+
+    for _ in range(12):
+        w.view.zoom_in()
+    assert 1.0 / w.view.scale_factor < tolerance
+
+
+def test_the_ruler_draws_and_can_be_switched_off(workspace, app):
+    w = workspace(11)
+    with_ruler = len(w.scene.items())
+    w.ruler_toggle.setChecked(False)
+    assert len(w.scene.items()) < with_ruler
+    w.ruler_toggle.setChecked(True)
+    assert len(w.scene.items()) == with_ruler
+
+
+def test_dragging_snaps_to_the_grid_and_to_optical_planes(workspace, app):
+    w = workspace(11)
+    # A position close to the image plane is captured by it.
+    snapped, captured = w.scene.snap_position(379.2)
+    assert captured and snapped == pytest.approx(380.0)
+
+    # Away from any plane it falls back to the grid step.
+    w.scene.snap_step_mm = 0.5
+    snapped, captured = w.scene.snap_position(300.3)
+    assert not captured and snapped == pytest.approx(300.5)
+
+
+def test_alt_suspends_snapping(workspace, app):
+    w = workspace(11)
+    w.view._set_snapping(False)
+    assert w.scene.snap_position(379.2) == (379.2, False)
+    w.view._set_snapping(True)
+    assert w.scene.snap_position(379.2)[1] is True
+
+
+def test_plane_snapping_can_be_turned_off_independently(workspace, app):
+    w = workspace(11)
+    w.plane_snap.setChecked(False)
+    snapped, captured = w.scene.snap_position(379.2)
+    assert not captured
+    assert snapped == pytest.approx(379.2, abs=0.05)  # grid only
+
+
+def test_switching_to_inches_changes_the_snap_steps_offered(workspace, app):
+    w = workspace(11)
+    metric = [w.snap_box.itemText(i) for i in range(w.snap_box.count())]
+    w.unit_box.setCurrentText("in")
+    imperial = [w.snap_box.itemText(i) for i in range(w.snap_box.count())]
+
+    assert any("mm" in text for text in metric)
+    assert all('"' in text for text in imperial)
+    assert w.scene.unit == "in"
+
+
+def test_typing_a_position_places_a_component_exactly(workspace, app):
+    # The reliable route: no pixels involved.
+    w = workspace(11)
+    w._on_element_selected("sensor")
+    w._set_element_position("sensor", 372.5)
+    assert w.bench.get("sensor").s == pytest.approx(372.5)
+    w._set_element_position("sensor", 380.0)
+    assert w.bench.get("sensor").s == pytest.approx(380.0)
+
+
+def test_the_inspector_shows_and_edits_position_in_the_chosen_unit(workspace, app):
+    from microscopevuilder.ui.ruler import MM_PER_INCH
+
+    w = workspace(11)
+    w._on_element_selected("sensor")
+    assert w.inspector.position_spin.value() == pytest.approx(380.0)
+
+    w.unit_box.setCurrentText("in")
+    w._on_element_selected("sensor")
+    assert w.inspector.position_spin.value() == pytest.approx(380.0 / MM_PER_INCH, abs=1e-3)
+
+
+def test_the_grading_selector_switches_tolerance_policy(workspace, app):
+    from microscopevuilder.rules.tolerances import TolerancePolicy, tolerance_policy
+
+    w = workspace(11)
+    w._on_element_selected("sensor")
+    w._set_element_position("sensor", 375.0)
+    assert w.report_panel.headline.text() == "ROUND PASSED"
+
+    w.tolerance_box.setCurrentIndex(1)  # strict
+    try:
+        assert tolerance_policy() is TolerancePolicy.STRICT
+        assert "failing" in w.report_panel.headline.text()
+    finally:
+        w.tolerance_box.setCurrentIndex(0)
+    assert tolerance_policy() is TolerancePolicy.FORGIVING
