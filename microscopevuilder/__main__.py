@@ -30,7 +30,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--diff", action="store_true", help="on failure, diff against a working build")
     parser.add_argument(
         "--strict", action="store_true",
-        help="grade positions at the physical tolerance instead of the 5% practice one",
+        # argparse runs help strings through %-formatting, so a literal percent
+        # must be doubled or --help raises ValueError.
+        help="grade positions at the physical tolerance instead of the 5%% practice one",
     )
     parser.add_argument(
         "--verify-catalog", action="store_true",

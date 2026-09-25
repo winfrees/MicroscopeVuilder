@@ -144,3 +144,48 @@ def test_linux_release_is_built_on_the_oldest_supported_runner():
     # not start on an older lab machine.
     workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert "ubuntu-22.04" in workflow
+
+
+# --- the CLI's own surface ---------------------------------------------------
+
+
+def test_help_does_not_crash():
+    """`--help` must work. It is the first thing anyone types.
+
+    argparse runs help strings through %-formatting, so a literal percent sign in
+    one raises ValueError at the moment help is rendered -- and nowhere else, so
+    nothing else in the suite would catch it. A "5% practice tolerance" in the
+    --strict help did exactly that.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-m", "microscopevuilder", "--help"],
+        capture_output=True,
+        text=True,
+        cwd=REPO,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--strict" in result.stdout
+
+
+def test_every_flag_the_readme_documents_exists():
+    """The README names specific flags; a renamed flag should fail here, not in
+    front of someone following the instructions."""
+    import argparse
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-m", "microscopevuilder", "--help"],
+        capture_output=True,
+        text=True,
+        cwd=REPO,
+    )
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+
+    for flag in ("--list", "--round", "--ui", "--verify-catalog", "--bench", "--diff",
+                 "--strict", "--no-measure"):
+        assert flag in readme, f"{flag} is no longer documented"
+        assert flag in result.stdout, f"{flag} is documented but does not exist"
