@@ -1,12 +1,11 @@
 # Playtest script — the conjugate-plane ribbon
 
-The ribbon is the one design risk in this project that cannot be settled from code.
-Tests confirm *numerically* that field and aperture planes interleave and land where
-they should. Whether the ribbon makes that **legible to a person** is a different
-question, and the plan has carried it as an open risk since M4.
+The ribbon is the one design risk here that code cannot settle. Tests confirm
+*numerically* that field and aperture planes interleave and land where they should.
+Whether it is **legible to a person** is a different question.
 
-This is the script for answering it. It needs one person who has not seen the
-workspace before, and about twenty minutes.
+This is the script for answering it: one person who has not seen the workspace, about
+twenty minutes.
 
 ## Who
 
