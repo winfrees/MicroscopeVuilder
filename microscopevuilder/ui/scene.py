@@ -17,6 +17,7 @@ from ..bench.bench import Bench
 from .geometry import arm_axis_frame, axis_frame, point_at, project
 from .ruler import choose_step, snap, snap_to_planes, ticks, to_display
 from .trace_model import TraceModel, build_trace_model
+from .render_jobs import card_ordinals
 
 # Marginal and chief rays are the classic teaching pair, so they get the two
 # strongest colors; everything structural stays muted.
@@ -69,7 +70,7 @@ class ElementItem(QtWidgets.QGraphicsItem):
 
     def boundingRect(self) -> QtCore.QRectF:
         half = self.element.semi_diameter_mm
-        return QtCore.QRectF(-4, -half - 4, 8, 2 * half + 8)
+        return QtCore.QRectF(-6, -half - 8, 12, 2 * half + 16)
 
     def paint(self, painter, option, widget=None) -> None:
         element = self.element
@@ -95,6 +96,20 @@ class ElementItem(QtWidgets.QGraphicsItem):
             painter.setBrush(QtGui.QBrush(COLOR_CARD))
             painter.setOpacity(0.85)
             painter.drawRect(QtCore.QRectF(-0.8, -half, 1.6, 2 * half))
+            # The number ties this card to its pane in the image tab.
+            ordinal = self._scene.card_ordinal(self.name)
+            if ordinal is not None:
+                painter.setOpacity(1.0)
+                painter.setPen(QtGui.QPen(COLOR_CARD, 1.0))
+                font = painter.font()
+                font.setPointSizeF(3.0)
+                painter.setFont(font)
+                painter.save()
+                painter.translate(0.0, -half - 1.0)
+                painter.scale(1.0, -1.0)
+                painter.drawText(QtCore.QRectF(-6, -4, 12, 4),
+                                 QtCore.Qt.AlignCenter, str(ordinal))
+                painter.restore()
         else:
             # A stop: two jaws leaving the clear aperture open between them.
             jaw = max(half * 0.45, 1.0)
@@ -251,6 +266,12 @@ class BenchScene(QtWidgets.QGraphicsScene):
         if abs(scale - self.view_scale) > 1e-9:
             self.view_scale = scale
             self.refresh()
+
+    def card_ordinal(self, name: str) -> int | None:
+        """The card's 1..n number, matching its pane in the image tab."""
+        if self.bench is None:
+            return None
+        return card_ordinals(self.bench).get(name)
 
     def glyph_rotation(self, element) -> float:
         """Degrees to rotate a component glyph so it lies across its own axis."""
