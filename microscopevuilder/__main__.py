@@ -18,7 +18,12 @@ from .game.scoring import check_parts_budget, diff_against_reference, score_roun
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="microscopevuilder")
-    parser.add_argument("--round", type=int, default=1, help="round number to grade")
+    # No default: the grader falls back to round 1, while --ui with no round named
+    # resumes wherever the player left off rather than forcing one.
+    parser.add_argument(
+        "--round", type=int, default=None,
+        help="round number to grade (the workspace resumes the last round if omitted)",
+    )
     parser.add_argument("--bench", type=Path, help="bench JSON to grade (default: the reference build)")
     parser.add_argument("--list", action="store_true", help="list implemented rounds")
     parser.add_argument("--ui", action="store_true", help="open the graphical workspace")
@@ -72,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
 
         set_tolerance_policy(TolerancePolicy.STRICT)
 
-    rnd = get_round(args.round)
+    rnd = get_round(args.round or 1)
     bench = Bench.load(args.bench) if args.bench else rnd.reference_build()
 
     if args.save_reference:
@@ -89,27 +94,40 @@ def main(argv: list[str] | None = None) -> int:
     print(report.format())
 
     # Measured rules render the image, so they are a separate pass. Headless there
-    # is no reason to skip them; in the workspace they run behind Run.
-    if rnd.has_measured_rules and not args.no_measure:
-        print()
-        print("-- measured from the rendered image --")
-        print(rnd.measure_image(bench).format())
-
+    # is no reason to skip them; in the workspace they run behind Run. Rendered
+    # once and used twice -- this used to render the whole image set a second time
+    # just to score what it had already printed.
     measured_report = None
     if rnd.has_measured_rules and not args.no_measure:
         measured_report = rnd.measure_image(bench)
+        print()
+        print("-- measured from the rendered image --")
+        print(measured_report.format())
 
-    score = score_round(bench, rnd.parts_budget, report, measured_report)
+    # A round graded on resolution or sampling cannot pass on ray geometry alone,
+    # so --no-measure yields a provisional result rather than a pass.
+    score = score_round(
+        bench, rnd.parts_budget, report, measured_report,
+        needs_measurement=rnd.has_measured_rules,
+    )
     print()
     print(score.describe())
 
     progress = Progress.load(args.progress)
-    progress.complete(rnd.number, score.stars, score.parts_used)
+    progress.complete(
+        rnd.number, score.stars, score.parts_used,
+        bench.to_dict() if score.passed else None,
+    )
     progress.save(args.progress)
 
     if score.passed:
         print("ROUND PASSED")
         return 0
+
+    if score.provisional:
+        # Not a pass and not a failure: the rules that settle it were not run.
+        print("ROUND NOT GRADED -- drop --no-measure to run the measured rules")
+        return 2
 
     if args.diff:
         print()

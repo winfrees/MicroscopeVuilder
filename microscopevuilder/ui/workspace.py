@@ -16,7 +16,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..bench.bench import Bench
 from ..bench.probe import find_planes, read_card
-from ..game.rounds import Round, get_round
+from ..game.rounds import ROUNDS, Round, get_round
 from ..imaging import metrics
 from ..game.progress import Progress
 from ..game.rounds import PREREQUISITES
@@ -491,16 +491,121 @@ class ScopePanel(QtWidgets.QWidget):
         self.caption.setText(summary)
 
 
+class RoundsPanel(QtWidgets.QWidget):
+    """The hub: every round, its rating, and what a locked one is waiting for.
+
+    The unlock graph existed and was tested from the first milestone, but only
+    `--list` ever read it. This is where it becomes visible -- and where the branch
+    structure (the epi rounds off 5, the contrast techniques off Kohler) reads as a
+    choice rather than a straight line.
+    """
+
+    roundChosen = QtCore.Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QtWidgets.QVBoxLayout(self)
+        self.tree = QtWidgets.QTreeWidget()
+        self.tree.setHeaderLabels(["round", "rating", "parts"])
+        self.tree.setRootIsDecorated(False)
+        self.tree.itemActivated.connect(self._chosen)
+        self.tree.itemDoubleClicked.connect(self._chosen)
+        layout.addWidget(self.tree, 1)
+        self.open_button = QtWidgets.QPushButton("Open the selected round")
+        self.open_button.clicked.connect(
+            lambda: self._chosen(self.tree.currentItem(), 0)
+        )
+        layout.addWidget(self.open_button)
+
+    def show_rounds(self, progress, current: int) -> None:
+        self.tree.clear()
+        for number in sorted(n for n in ROUNDS if n):
+            round_ = get_round(number)
+            record = progress.record(number)
+            unlocked = progress.is_unlocked(number, PREREQUISITES)
+            stars = "\u2605" * record.stars + "\u2606" * (3 - record.stars)
+            item = QtWidgets.QTreeWidgetItem(
+                [
+                    f"{number}. {round_.title}" + ("   (current)" if number == current else ""),
+                    stars if unlocked else "locked",
+                    "" if record.best_parts is None else str(record.best_parts),
+                ]
+            )
+            item.setData(0, QtCore.Qt.UserRole, number)
+            if not unlocked:
+                required = PREREQUISITES.get(number)
+                item.setToolTip(
+                    1,
+                    "needs round {}: {}".format(required, get_round(required).title)
+                    if required
+                    else "",
+                )
+                item.setForeground(0, QtGui.QColor("#6b7280"))
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEnabled)
+            elif number == current:
+                for column in range(3):
+                    item.setForeground(column, QtGui.QColor("#f2f2f2"))
+            self.tree.addTopLevelItem(item)
+        self.tree.resizeColumnToContents(0)
+
+    def _chosen(self, item, _column=0) -> None:
+        if item is None:
+            return
+        number = item.data(0, QtCore.Qt.UserRole)
+        if number is not None and item.flags() & QtCore.Qt.ItemIsEnabled:
+            self.roundChosen.emit(int(number))
+
+
+class CompletionBanner(QtWidgets.QFrame):
+    """The moment a round is solved.
+
+    A solved round should be something the player did, not a state the app noticed
+    in passing. This says what they achieved and offers the way on.
+    """
+
+    nextRequested = QtCore.Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        self.setStyleSheet(
+            "QFrame { background: #10331f; border: 1px solid #2f7d4f; border-radius: 4px; }"
+        )
+        layout = QtWidgets.QHBoxLayout(self)
+        self.label = QtWidgets.QLabel()
+        self.label.setWordWrap(True)
+        layout.addWidget(self.label, 1)
+        self.next_button = QtWidgets.QPushButton("Next round")
+        self.next_button.clicked.connect(lambda: self.nextRequested.emit())
+        layout.addWidget(self.next_button)
+
+    def show_solved(self, round_, score, next_title: str | None) -> None:
+        stars = "\u2605" * score.stars + "\u2606" * (3 - score.stars)
+        detail = "; ".join(score.reasons) if score.reasons else "every rule green"
+        self.label.setText(
+            f"<b>Round {round_.number} solved.</b> {stars} &nbsp; "
+            f"{score.parts_used}/{score.parts_budget} parts &mdash; {detail}"
+        )
+        self.next_button.setVisible(next_title is not None)
+        if next_title:
+            self.next_button.setText(f"Next: {next_title}")
+        self.show()
+
+
 class Workspace(QtWidgets.QMainWindow):
-    def __init__(self, round_number: int = 2, parent=None):
+    def __init__(self, round_number: int | None = None, parent=None):
         super().__init__(parent)
         from .scene import BenchScene  # imported late so geometry stays Qt-free
         from .view import BenchView
 
-        self.round: Round = get_round(round_number)
-        self.bench: Bench = self.round.reference_build()
-        self.worker: ImageWorker | None = None
         self.progress = Progress.load()
+        # No default round. The game reopens where the player left off, and a fresh
+        # save starts at round 1 -- not at whichever round the code happened to name.
+        if round_number is None:
+            round_number = self.progress.last_round or 1
+        self.round: Round = get_round(round_number)
+        self.bench: Bench = self._starting_bench(self.round)
+        self.worker: ImageWorker | None = None
         self.last_measured = None
         self._closing = False
         self._image_cache: dict = {}
@@ -519,6 +624,8 @@ class Workspace(QtWidgets.QMainWindow):
         self.scene.snapReadout.connect(self._on_snap_readout)
 
         self.inspector = InspectorPanel()
+        self.rounds_panel = RoundsPanel()
+        self.rounds_panel.roundChosen.connect(self.load_round)
         self.report_panel = ReportPanel()
         self.scope = ScopePanel()
         self.metrics_panel = MetricsPanel()
@@ -526,6 +633,7 @@ class Workspace(QtWidgets.QMainWindow):
         self.card_panel = CardPanel()
 
         right = QtWidgets.QTabWidget()
+        right.addTab(self.rounds_panel, "rounds")
         right.addTab(self.report_panel, "scorecard")
         right.addTab(self.card_panel, "white card")
         right.addTab(self.inspector, "inspector")
@@ -536,9 +644,13 @@ class Workspace(QtWidgets.QMainWindow):
         splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         left = QtWidgets.QWidget()
         left_layout = QtWidgets.QVBoxLayout(left)
-        brief = QtWidgets.QLabel(f"<b>{self.round.title}</b><br>{self.round.brief}")
-        brief.setWordWrap(True)
-        left_layout.addWidget(brief)
+        self.brief = QtWidgets.QLabel()
+        self.brief.setWordWrap(True)
+        left_layout.addWidget(self.brief)
+        self.banner = CompletionBanner()
+        self.banner.nextRequested.connect(self._advance)
+        self.banner.hide()
+        left_layout.addWidget(self.banner)
         left_layout.addWidget(self.view, 1)
         splitter.addWidget(left)
         splitter.addWidget(right)
@@ -547,6 +659,7 @@ class Workspace(QtWidgets.QMainWindow):
 
         self._build_toolbar()
         self._warn_about_unverified_catalog()
+        self._show_round_header()
         self.scene.set_bench(self.bench, self.round.s_object)
         self.scene.benchChanged.connect(self.refresh_live)
         self.scene.elementSelected.connect(self._on_element_selected)
@@ -735,18 +848,135 @@ class Workspace(QtWidgets.QMainWindow):
             bits.append(f"stop: {model.aperture_stop}")
         self.statusBar().showMessage("   |   ".join(bits))
 
+    # --- rounds --------------------------------------------------------------
+
+    def _starting_bench(self, round_: Round) -> Bench:
+        """What this round opens on: the build that solved its prerequisite.
+
+        Nothing is dismantled on the player's behalf -- a component this round has
+        no use for is parked, not removed, and the parts budget does not charge for
+        a part on the shelf.
+        """
+        required = PREREQUISITES.get(round_.number)
+        carried = None
+        if required is not None:
+            saved = self.progress.solved_bench(required)
+            if saved is not None:
+                carried = Bench.from_dict(saved)
+        return round_.starting_build(carried)
+
+    def _show_round_header(self) -> None:
+        self.setWindowTitle(
+            f"MicroscopeVuilder -- round {self.round.number}: {self.round.title}"
+        )
+        introduced = getattr(self.bench, "introduced", ()) or ()
+        carried = PREREQUISITES.get(self.round.number) is not None and any(
+            not e.enabled for e in self.bench.elements
+        )
+        notes = []
+        if introduced:
+            notes.append(
+                "new on the bench, waiting at the near end: " + ", ".join(introduced)
+            )
+        if carried:
+            notes.append("components this round has no use for are parked, not removed")
+        extra = ("<br><i>" + " &nbsp;|&nbsp; ".join(notes) + "</i>") if notes else ""
+        self.brief.setText(f"<b>{self.round.title}</b><br>{self.round.brief}{extra}")
+        self.rounds_panel.show_rounds(self.progress, self.round.number)
+
+    def load_round(self, number: int) -> None:
+        """Switch rounds. The workspace could not do this at all until now."""
+        if not self.progress.is_unlocked(number, PREREQUISITES):
+            self.statusBar().showMessage(f"round {number} is still locked")
+            return
+        if self.worker is not None and self.worker.isRunning():
+            self.worker.requestInterruption()
+            self.worker.wait(5_000)
+
+        self.round = get_round(number)
+        self.bench = self._starting_bench(self.round)
+        self.last_measured = None
+        self._image_cache.clear()
+        self._last_optics = None
+        self._last_rendered = None
+        self.banner.hide()
+        self.progress.visit(number)
+        self._save_progress()
+        self._show_round_header()
+        self.scene.set_bench(self.bench, self.round.s_object)
+        self.scope.set_planes([])
+        self.refresh_live()
+        self.view.fit_bench()
+
+    def _advance(self) -> None:
+        """Move on to whatever this round unlocks."""
+        following = self.next_round()
+        if following is not None:
+            self.load_round(following)
+
+    def next_round(self) -> int | None:
+        """Where to go from here.
+
+        What this round unlocks, preferring something unsolved. Rounds 10, 12 and 15
+        are leaves -- nothing depends on them -- so from there the way on is the
+        lowest unlocked round still outstanding anywhere, which is how a player who
+        finishes the epi branch gets back to the main line instead of a dead end.
+        """
+        unlocks = [
+            n for n, required in sorted(PREREQUISITES.items())
+            if required == self.round.number
+        ]
+        for number in unlocks:
+            if not self.progress.is_solved(number):
+                return number
+        outstanding = [
+            n for n in sorted(ROUNDS)
+            if n
+            and n != self.round.number
+            and not self.progress.is_solved(n)
+            and self.progress.is_unlocked(n, PREREQUISITES)
+        ]
+        if outstanding:
+            return outstanding[0]
+        return unlocks[0] if unlocks else None
+
+    def _save_progress(self) -> None:
+        try:
+            self.progress.save()
+        except OSError:
+            # A read-only or full disk must not take the game down with it.
+            self.statusBar().showMessage("could not save progress (read-only location?)")
+
     def _update_score(self, report) -> None:
         """Rate the build and remember it. Progress should survive closing the app."""
-        score = score_round(self.bench, self.round.parts_budget, report, self.last_measured)
+        score = score_round(
+            self.bench,
+            self.round.parts_budget,
+            report,
+            self.last_measured,
+            needs_measurement=self.round.has_measured_rules,
+        )
         self.report_panel.show_score(score)
-        self.diff_action.setEnabled(not score.passed)
-        if score.passed:
-            self.progress.complete(self.round.number, score.stars, score.parts_used)
-            try:
-                self.progress.save()
-            except OSError:
-                # A read-only or full disk must not take the game down with it.
-                self.statusBar().showMessage("could not save progress (read-only location?)")
+        self.diff_action.setEnabled(not score.passed and not score.provisional)
+        if not score.passed:
+            self.banner.hide()
+            return
+
+        # A genuine pass: every applicable rule satisfied, measured ones included.
+        # Recorded with the build that earned it, so the next round can start from
+        # it, and kept only if it beats what was there -- replaying can improve a
+        # record, never spoil one.
+        self.progress.complete(
+            self.round.number, score.stars, score.parts_used, self.bench.to_dict()
+        )
+        self._save_progress()
+        following = self.next_round()
+        self.banner.show_solved(
+            self.round,
+            score,
+            get_round(following).title if following is not None else None,
+        )
+        self.rounds_panel.show_rounds(self.progress, self.round.number)
 
     def show_diff(self) -> None:
         """Offer the structural diff -- what differs, not what to do about it."""
@@ -1068,7 +1298,13 @@ class Workspace(QtWidgets.QMainWindow):
         self.statusBar().showMessage(message)
 
 
-def launch(round_number: int = 2) -> int:
+def launch(round_number: int | None = None) -> int:
+    """Open the workspace. With no round named, resume where the player left off.
+
+    The old default of round 2 meant a frozen binary -- the way the intended
+    audience actually runs this -- opened mid-game on a round whose prerequisite
+    had never been met.
+    """
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     window = Workspace(round_number)
     window.show()

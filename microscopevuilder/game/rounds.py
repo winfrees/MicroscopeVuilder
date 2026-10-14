@@ -104,6 +104,16 @@ class Round:
         """The live pass: ray geometry only, fast enough for every drag."""
         return self.evaluate(bench)
 
+    def starting_build(self, carried: Bench | None = None) -> Bench:
+        """The bench this round opens on, given what the player arrives carrying.
+
+        Distinct from `reference_build`, which is the solvability proof and the
+        source of the diff. Opening on the reference meant opening on the answer.
+        """
+        from .carry import derive_starting_build
+
+        return derive_starting_build(self.reference_build(), carried)
+
     def measure_image(self, bench: Bench) -> RuleReport:
         """The measured pass: renders, so it runs on Run."""
         return self.measure(bench) if self.measure else RuleReport()
@@ -681,9 +691,38 @@ ROUND_9 = Round(
 
 def _round10_evaluate(bench: Bench) -> RuleReport:
     from ..optics.spectra import CUBES, FLUOROPHORES
+    from ..rules.base import RuleResult, Status
 
     report = RuleReport()
-    cube = CUBES[bench.get("beamsplitter").metadata.get("cube", "fitc")]
+    # No default cube. Defaulting to "fitc" made an unfitted beamsplitter read as
+    # exactly the right cube for the FITC specimen, so a build carried in from the
+    # previous round passed this round without anyone choosing anything -- the
+    # default was supplying the answer.
+    fitted = bench.get("beamsplitter").metadata.get("cube")
+    if fitted is None:
+        report.add(
+            RuleResult(
+                name="Filter cube",
+                status=Status.FAIL,
+                summary="no cube fitted to the beamsplitter",
+                equation="a dichroic passes excitation one way and emission the other",
+                remedy="fit the cube matching the specimen's fluorophore",
+            )
+        )
+        return report
+    if fitted not in CUBES:
+        report.add(
+            RuleResult(
+                name="Filter cube",
+                status=Status.FAIL,
+                summary=f"no such cube: {fitted}",
+                equation="available: " + ", ".join(sorted(CUBES)),
+                remedy="fit one of the catalogued cubes",
+            )
+        )
+        return report
+
+    cube = CUBES[fitted]
     dye = FLUOROPHORES[bench.get("specimen").metadata.get("fluorophore", "fitc")]
 
     report.add(check_stokes_shift(dye, cube))
@@ -1339,7 +1378,19 @@ def _sandbox_evaluate(bench: Bench) -> RuleReport:
             measured=image_s,
         )
     )
-    if image_s is not None:
+    if image_s is not None and image_s < s_object:
+        # A solution upstream of the object is not an image of it. The sandbox has
+        # to survive any arrangement a player can drag together, and asking for the
+        # magnification of a backwards interval raises rather than returning a
+        # number.
+        report.add(
+            RuleResult(
+                "Magnification", Status.NOT_APPLICABLE,
+                "no real image downstream of the object",
+                equation="the bench is traced in one direction, object first",
+            )
+        )
+    elif image_s is not None:
         report.add(
             RuleResult(
                 "Magnification", Status.NOT_APPLICABLE,

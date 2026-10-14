@@ -19,8 +19,14 @@ FREE_KINDS = frozenset({"white_card", "field_stop", "lamp"})
 
 
 def billable_parts(bench: Bench) -> list[BenchElement]:
-    """The components that count against a round's budget."""
-    return [e for e in bench.elements if e.kind not in FREE_KINDS]
+    """The components that count against a round's budget.
+
+    A parked component -- carried over from an earlier round but not in the path --
+    costs nothing: no light, no scatter, nothing to align. `to_paraxial` already
+    ignores it, so the budget must too, or carrying a build forward would be
+    punished for parts the player is not using.
+    """
+    return [e for e in bench.elements if e.kind not in FREE_KINDS and e.enabled]
 
 
 def check_parts_budget(bench: Bench, budget: int) -> RuleResult:
@@ -40,7 +46,7 @@ def check_parts_budget(bench: Bench, budget: int) -> RuleResult:
             + ("" if status is Status.PASS else f" -- {used - budget} over")
         ),
         equation=(
-            "counting everything but cards, stops and the lamp: "
+            "counting everything in the path but cards, stops and the lamp: "
             + ", ".join(e.name for e in billable_parts(bench))
         ),
         measured=float(used),
@@ -60,10 +66,15 @@ class Score:
     reasons: list[str] = field(default_factory=list)
     parts_used: int = 0
     parts_budget: int = 0
+    # Geometry is green but the rules that need a rendered image have not been run
+    # against this build yet, so there is no verdict to give. Not a pass, and not a
+    # failure either.
+    provisional: bool = False
 
     @property
     def passed(self) -> bool:
-        return self.stars > 0
+        """A pass is every applicable rule satisfied -- not merely none objecting."""
+        return self.stars > 0 and not self.provisional
 
     def describe(self) -> str:
         pips = "*" * self.stars + "." * (3 - self.stars)
@@ -75,6 +86,7 @@ def score_round(
     budget: int,
     live: RuleReport,
     measured: RuleReport | None = None,
+    needs_measurement: bool = False,
 ) -> Score:
     """Rate a build out of three.
 
@@ -82,9 +94,26 @@ def score_round(
     solved: no warnings outstanding, and inside the parts budget. A build that
     passes with a warning has worked, and a demonstrator would still raise an
     eyebrow -- which is exactly the distinction the second star marks.
+
+    `needs_measurement` says this round has rules that only a rendered image can
+    settle. Until that render has happened the score is *provisional*: it is not a
+    pass, however green the geometry looks.
     """
     results = list(live.results) + list(measured.results if measured else [])
     failures = [r for r in results if r.status is Status.FAIL]
+    used_now = len(billable_parts(bench))
+
+    if needs_measurement and measured is None and not failures:
+        # Absence of evidence was reading as success: a round graded on resolution
+        # or sampling would pass on ray geometry alone, skipping the half it exists
+        # to teach. Withhold the verdict instead of inventing one.
+        return Score(
+            0,
+            ["geometry is green -- press Run to grade the rules that need an image"],
+            used_now,
+            budget,
+            provisional=True,
+        )
     warnings = [r for r in results if r.status is Status.WARN]
     used = len(billable_parts(bench))
 

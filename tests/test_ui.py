@@ -13,6 +13,8 @@ from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
 from microscopevuilder.bench.bench import Bench, BenchElement, Fold  # noqa: E402
 from microscopevuilder.game.rounds import get_round  # noqa: E402
+from microscopevuilder.game.rounds import PREREQUISITES  # noqa: E402
+from microscopevuilder.game.progress import Progress  # noqa: E402
 from microscopevuilder.ui.geometry import axis_frame, point_at  # noqa: E402
 from microscopevuilder.ui.scene import BenchScene, ElementItem  # noqa: E402
 from microscopevuilder.ui.trace_model import build_trace_model  # noqa: E402
@@ -33,8 +35,17 @@ def workspace(app):
     """
     windows = []
 
-    def make(number: int) -> Workspace:
+    def make(number: int, solved: bool = False) -> Workspace:
+        """A workspace on `number`.
+
+        Rounds now open on an unsolved build -- the previous round's solution plus
+        this round's new parts in the tray -- so a test that needs a *working*
+        microscope asks for `solved=True` and gets the reference build loaded, which
+        is what every one of these tests used to be handed for free.
+        """
         window = Workspace(number)
+        if solved:
+            window.load_reference()
         windows.append(window)
         return window
 
@@ -168,11 +179,19 @@ def test_scene_renders_to_an_image_without_error(app, tmp_path):
 # --- the window --------------------------------------------------------------
 
 
-def test_workspace_opens_on_a_passing_reference_build(workspace, app):
+def test_a_round_opens_unsolved_not_on_its_own_answer(workspace, app):
+    # This used to assert the opposite -- that the workspace opened on a passing
+    # build -- because every round loaded its own reference, which is the answer
+    # assembled. A round that opens solved is not a puzzle.
     w = workspace(2)
-    assert w.report_panel.headline.text() == "ROUND PASSED"
+    assert w.report_panel.headline.text() != "ROUND PASSED"
     # The live rules, plus the parts-budget row the workspace appends.
     assert w.report_panel.list.topLevelItemCount() == len(w.round.grade(w.bench).results) + 1
+
+    # The reference build still solves it: the round is winnable, the player just
+    # has not won it yet.
+    w.load_reference()
+    assert w.report_panel.headline.text() == "ROUND PASSED"
 
 
 def test_workspace_scorecard_tracks_an_edit(workspace, app):
@@ -210,7 +229,7 @@ def test_status_line_explains_an_afocal_system_rather_than_going_quiet(workspace
 
 
 def test_status_line_reports_the_image_plane_when_one_exists(workspace, app):
-    w = workspace(1)
+    w = workspace(1, solved=True)
     message = w.statusBar().currentMessage()
     assert "image at s = 300.00 mm" in message
     assert "M = 5.00x" in message
@@ -293,7 +312,7 @@ def test_the_measurements_panel_names_its_aberration_provenance(workspace, app):
 
 
 def test_workspace_can_place_and_clear_cards(workspace, app):
-    w = workspace(2)
+    w = workspace(2, solved=True)
     assert "place a card" in w.card_panel.reading.text()
 
     w.add_card(193.6)
@@ -357,14 +376,14 @@ def test_illumination_rounds_open_without_tracing_backwards(workspace, app):
 
 
 def test_the_illumination_path_is_traced_as_its_own_ray_set(workspace, app):
-    w = workspace(4)
+    w = workspace(4, solved=True)
     labels = {r.label for r in w.scene.model.rays}
     assert "illumination_axial" in labels
     assert "marginal" in labels
 
 
 def test_illumination_and_imaging_paths_toggle_independently(workspace, app):
-    w = workspace(4)
+    w = workspace(4, solved=True)
     both = len(w.scene.items())
     w._toggle_illumination(False)
     imaging_only = len(w.scene.items())
@@ -394,7 +413,7 @@ def test_reading_a_card_upstream_of_the_object_raises_clearly():
 
 @pytest.mark.parametrize("number", [9, 10])
 def test_epi_rounds_open_and_draw(workspace, app, number):
-    w = workspace(number)
+    w = workspace(number, solved=True)
     assert w.report_panel.headline.text() == "ROUND PASSED"
     labels = {r.label for r in w.scene.model.rays}
     assert "illumination_axial" in labels and "marginal" in labels
@@ -429,7 +448,7 @@ def test_arm_elements_are_placed_off_the_main_axis(app):
 
 @pytest.mark.parametrize("number", [0, 11, 12])
 def test_infinity_and_sandbox_rounds_open(workspace, app, number):
-    w = workspace(number)
+    w = workspace(number, solved=True)
     assert w.report_panel.list.topLevelItemCount() > 0
     image = QtGui.QImage(700, 350, QtGui.QImage.Format_ARGB32)
     painter = QtGui.QPainter(image)
@@ -449,7 +468,7 @@ def test_a_turret_draws_every_objective_even_the_ones_out_of_the_path(workspace,
 
 @pytest.mark.parametrize("number", [6, 7, 8])
 def test_measured_rounds_open_and_run(workspace, app, number):
-    w = workspace(number)
+    w = workspace(number, solved=True)
     assert w.report_panel.list.topLevelItemCount() > 0
     w.run_test()
     assert w.worker.wait(120_000)
@@ -479,13 +498,13 @@ def test_a_geometry_only_round_shows_no_measured_verdict(workspace, app):
 
 
 def test_the_scorecard_shows_a_star_rating(workspace, app):
-    w = workspace(11)
+    w = workspace(11, solved=True)
     assert "★★★" in w.report_panel.score_line.text()
     assert "parts" in w.report_panel.score_line.text()
 
 
 def test_breaking_the_build_drops_the_rating_and_offers_the_diff(workspace, app):
-    w = workspace(11)
+    w = workspace(11, solved=True)
     assert not w.diff_action.isEnabled()
 
     # Far enough out to fail even the 5% practice tolerance, which is what the
@@ -550,7 +569,7 @@ def test_zooming_in_makes_a_pixel_finer_than_the_tolerance(workspace, app):
     # depth of focus, and zoomed in it does not.
     from microscopevuilder.rules.tolerances import image_side_depth_of_focus_mm
 
-    w = workspace(11)
+    w = workspace(11, solved=True)
     w.view.resize(760, 400)
     w.view.fit_bench()
     tolerance = image_side_depth_of_focus_mm(0.5461, 0.75, 20.0)
@@ -573,7 +592,7 @@ def test_the_ruler_draws_and_can_be_switched_off(workspace, app):
 
 
 def test_dragging_snaps_to_the_grid_and_to_optical_planes(workspace, app):
-    w = workspace(11)
+    w = workspace(11, solved=True)
     # A position close to the image plane is captured by it.
     snapped, captured = w.scene.snap_position(379.2)
     assert captured and snapped == pytest.approx(380.0)
@@ -585,7 +604,7 @@ def test_dragging_snaps_to_the_grid_and_to_optical_planes(workspace, app):
 
 
 def test_alt_suspends_snapping(workspace, app):
-    w = workspace(11)
+    w = workspace(11, solved=True)
     w.view._set_snapping(False)
     assert w.scene.snap_position(379.2) == (379.2, False)
     w.view._set_snapping(True)
@@ -624,7 +643,7 @@ def test_typing_a_position_places_a_component_exactly(workspace, app):
 def test_the_inspector_shows_and_edits_position_in_the_chosen_unit(workspace, app):
     from microscopevuilder.ui.ruler import MM_PER_INCH
 
-    w = workspace(11)
+    w = workspace(11, solved=True)
     w._on_element_selected("sensor")
     assert w.inspector.position_spin.value() == pytest.approx(380.0)
 
@@ -636,7 +655,7 @@ def test_the_inspector_shows_and_edits_position_in_the_chosen_unit(workspace, ap
 def test_the_grading_selector_switches_tolerance_policy(workspace, app):
     from microscopevuilder.rules.tolerances import TolerancePolicy, tolerance_policy
 
-    w = workspace(11)
+    w = workspace(11, solved=True)
     w._on_element_selected("sensor")
     w._set_element_position("sensor", 375.0)
     assert w.report_panel.headline.text() == "ROUND PASSED"
@@ -795,3 +814,137 @@ def test_closing_the_window_disarms_a_pending_auto_run(workspace, app):
     assert w._auto_timer.isActive() is False
     w.request_auto_run()
     assert w._auto_timer.isActive() is False, "a closed workspace must not re-arm"
+
+
+# --- progression in the workspace --------------------------------------------
+
+
+def test_the_workspace_can_change_rounds_at_all(workspace, app):
+    # It could not: self.round was assigned in __init__ and never reassigned, so
+    # --round N on a command line was the only way to reach round 2.
+    w = workspace(1)
+    assert w.round.number == 1
+    w.load_reference()          # solve it, which is what unlocks round 2
+    w.load_round(2)
+    assert w.round.number == 2
+    assert w.windowTitle().endswith(get_round(2).title)
+
+
+def test_a_locked_round_refuses_to_open(workspace, app):
+    w = workspace(1)
+    w.progress.rounds.clear()
+    w.load_round(13)            # needs round 4: Kohler
+    assert w.round.number == 1, "a locked round must not load"
+    assert "locked" in w.statusBar().currentMessage()
+
+
+def test_the_hub_shows_ratings_and_what_a_locked_round_waits_for(workspace, app):
+    w = workspace(1)
+    w.progress.rounds.clear()
+    w.progress.complete(1, 2, 2, w.bench.to_dict())
+    w.rounds_panel.show_rounds(w.progress, 1)
+
+    rows = {}
+    for i in range(w.rounds_panel.tree.topLevelItemCount()):
+        item = w.rounds_panel.tree.topLevelItem(i)
+        rows[item.data(0, QtCore.Qt.UserRole)] = item
+    assert "★★☆" == rows[1].text(1), "a solved round shows its rating"
+    assert rows[2].text(1) == "☆☆☆", "unlocked but unsolved"
+    assert rows[13].text(1) == "locked"
+    assert "round 4" in rows[13].toolTip(1)
+    assert not rows[13].flags() & QtCore.Qt.ItemIsEnabled
+
+
+def test_solving_a_round_records_it_with_the_build_that_earned_it(workspace, app, tmp_path):
+    w = workspace(1)
+    w.progress = Progress()
+    w.progress.save = lambda *a, **k: tmp_path / "p.json"   # keep the real save out of it
+    w.load_reference()
+
+    record = w.progress.record(1)
+    assert record.stars == 3
+    assert record.best_bench is not None, "the solving build is what the next round starts from"
+    assert w.banner.isVisibleTo(w), "solving a round should be a moment, not a silent state"
+    assert "solved" in w.banner.label.text()
+
+
+def test_an_unsolved_round_records_nothing(workspace, app):
+    w = workspace(2)
+    w.progress = Progress()
+    w.refresh_live()
+    assert w.progress.record(2).stars == 0
+    assert not w.banner.isVisibleTo(w)
+
+
+def test_the_next_round_starts_from_the_build_that_solved_this_one(workspace, app):
+    w = workspace(1)
+    w.load_reference()
+    assert w.progress.record(1).stars > 0
+    saved = {
+        e["name"]: e["s"] for e in w.progress.solved_bench(1)["elements"]
+    }
+
+    w.load_round(2)
+    # Round 2 is the compound scope: it has no use for the loupe's singlet, so the
+    # singlet is parked -- still on the bench, at the position it was solved at,
+    # and not charged for.
+    assert w.bench.has("lens"), "the carried build is not dismantled"
+    assert w.bench.get("lens").s == pytest.approx(saved["lens"])
+    assert w.bench.get("lens").enabled is False
+    from microscopevuilder.game.scoring import billable_parts
+
+    assert "lens" not in [e.name for e in billable_parts(w.bench)]
+
+
+def test_the_workspace_resumes_the_last_round_instead_of_defaulting(workspace, app, monkeypatch):
+    # launch() defaulted to round 2, so the frozen binary -- how the audience
+    # actually runs this -- opened mid-game on a round whose prerequisite was
+    # never met.
+    saved = Progress()
+    saved.complete(1, 3, 2, {"elements": []})
+    saved.visit(2)
+    monkeypatch.setattr(Progress, "load", classmethod(lambda cls, path=None: saved))
+
+    resumed = Workspace()
+    try:
+        assert resumed.round.number == 2
+    finally:
+        resumed.close()
+
+    fresh = Progress()
+    monkeypatch.setattr(Progress, "load", classmethod(lambda cls, path=None: fresh))
+    first = Workspace()
+    try:
+        assert first.round.number == 1, "a fresh save starts at round 1"
+    finally:
+        first.close()
+
+
+def test_the_brief_says_what_is_new_and_what_is_parked(workspace, app):
+    w = workspace(1)
+    w.progress.complete(5, 3, 5, get_round(5).reference_build().to_dict())
+    w.load_round(6)
+    text = w.brief.text()
+    assert "tube_lens" in text, "the player is told what arrived in the tray"
+    assert "parked" in text, "and that nothing was thrown away"
+
+
+def test_a_leaf_round_still_offers_a_way_onward(workspace, app):
+    # Rounds 10, 12 and 15 unlock nothing, so "next" used to be None and the
+    # banner offered a dead end even with rounds outstanding elsewhere.
+    w = workspace(1)
+    w.load_reference()
+    for number in (2, 3, 4, 5, 9):
+        w.load_round(number)
+        w.load_reference()
+
+    w.load_round(10)
+    w.load_reference()
+    assert not [n for n, r in PREREQUISITES.items() if r == 10], "round 10 is a leaf"
+    assert w.next_round() == 6, "the lowest unlocked round still outstanding"
+
+
+def test_the_way_onward_prefers_what_this_round_unlocks(workspace, app):
+    w = workspace(1)
+    w.load_reference()
+    assert w.next_round() == 2

@@ -1,5 +1,6 @@
 """M12 gate: budget, scoring, the diff, progress and the specimen library."""
 
+import dataclasses
 import json
 
 import pytest
@@ -369,3 +370,140 @@ def test_the_shipped_catalog_is_honest_about_being_unverified():
     from microscopevuilder.bench.catalog import load_catalog
 
     assert load_catalog().unverified_entries()
+
+
+# --- progression: carrying a build forward -----------------------------------
+
+
+def test_no_round_opens_already_solved():
+    """The defect this whole mechanism exists to fix.
+
+    Every round used to load its own reference build and be graded on load, so
+    opening the app awarded three stars on 14 of 15 rounds and saved them.
+    """
+    from microscopevuilder.game.scoring import check_parts_budget, score_round
+
+    for number in sorted(n for n in ROUNDS if n):
+        round_ = get_round(number)
+        required = PREREQUISITES.get(number)
+        carried = get_round(required).reference_build() if required else None
+        bench = round_.starting_build(carried)
+
+        report = round_.grade(bench)
+        report.add(check_parts_budget(bench, round_.parts_budget))
+        score = score_round(
+            bench, round_.parts_budget, report, None,
+            needs_measurement=round_.has_measured_rules,
+        )
+        assert not score.passed, f"round {number} opens already solved"
+
+
+def test_a_measured_round_is_provisional_until_it_has_been_run():
+    from microscopevuilder.game.scoring import check_parts_budget, score_round
+
+    round_ = get_round(7)
+    assert round_.has_measured_rules
+    bench = round_.reference_build()
+    report = round_.grade(bench)
+    report.add(check_parts_budget(bench, round_.parts_budget))
+
+    # Geometry alone: no verdict, because the rules that settle this round need an
+    # image. A missing report used to read as "nothing objected", so it passed.
+    held = score_round(bench, round_.parts_budget, report, None, needs_measurement=True)
+    assert held.provisional and not held.passed and held.stars == 0
+
+    settled = score_round(
+        bench, round_.parts_budget, report, round_.measure_image(bench),
+        needs_measurement=True,
+    )
+    assert settled.passed and not settled.provisional
+
+
+def test_a_carried_build_keeps_the_players_positions():
+    previous = get_round(1).reference_build()
+    previous.move("lens", 123.0)          # solved, but not where the reference has it
+    carried = get_round(2).starting_build(previous)
+    assert carried.get("lens").s == 123.0
+
+
+def test_what_a_round_does_not_use_is_parked_rather_than_removed():
+    from microscopevuilder.game.scoring import billable_parts
+
+    # Round 6 is about the camera path, so the illumination train it inherits from
+    # round 5 is not in play -- but it is still the player's, and still on the bench.
+    carried = get_round(5).reference_build()
+    bench = get_round(6).starting_build(carried)
+
+    assert bench.has("condenser"), "a carried component must not be deleted"
+    assert bench.get("condenser").enabled is False, "it should be parked"
+    # A part on the shelf costs no light and nothing to align, so it is not charged
+    # for -- otherwise carrying a build forward would blow every later budget.
+    assert "condenser" not in [e.name for e in billable_parts(bench)]
+    assert len(billable_parts(bench)) <= get_round(6).parts_budget
+
+
+def test_new_components_arrive_unplaced():
+    from microscopevuilder.game.carry import is_in_tray
+
+    bench = get_round(11).starting_build(get_round(8).reference_build())
+    # Round 11 is additive: it introduces the filter and removes nothing.
+    assert [e.name for e in bench.elements if is_in_tray(e)] == ["filter"]
+    assert not any(not e.enabled for e in bench.elements), "nothing retired at round 11"
+    assert bench.get("filter").s != get_round(11).reference_build().get("filter").s
+
+
+def test_the_round_supplies_its_own_specimen():
+    # Round 10 needs a FITC specimen and the cube to match. Carrying the previous
+    # round's specimen forward is how it came to open already solved.
+    bench = get_round(10).starting_build(get_round(9).reference_build())
+    assert bench.get("specimen").metadata.get("fluorophore") == "fitc"
+
+
+def test_an_unfitted_filter_cube_fails_rather_than_defaulting_to_the_answer():
+    from microscopevuilder.rules.base import Status
+
+    bench = get_round(10).reference_build()
+    bench.elements = [
+        dataclasses.replace(e, metadata={}) if e.name == "beamsplitter" else e
+        for e in bench.elements
+    ]
+    report = get_round(10).grade(bench)
+    cube_rows = [r for r in report.results if r.name == "Filter cube"]
+    assert cube_rows and cube_rows[0].status is Status.FAIL
+
+
+def test_replaying_a_round_keeps_the_better_result():
+    progress = Progress()
+    progress.complete(1, 3, 4, {"marker": "good"})
+    progress.complete(1, 1, 9, {"marker": "worse"})
+
+    record = progress.record(1)
+    assert record.stars == 3
+    assert record.best_parts == 4
+    assert record.best_bench == {"marker": "good"}, "a worse replay must not overwrite"
+    assert record.attempts == 2, "but it still counts as an attempt"
+
+    progress.complete(1, 3, 2, {"marker": "better"})
+    assert progress.record(1).best_bench == {"marker": "better"}
+    assert progress.record(1).best_parts == 2
+
+
+def test_progress_remembers_the_round_and_survives_a_round_trip(tmp_path):
+    path = tmp_path / "progress.json"
+    progress = Progress()
+    progress.complete(1, 2, 3, {"elements": []})
+    progress.visit(5)
+    progress.save(path)
+
+    reloaded = Progress.load(path)
+    assert reloaded.last_round == 5
+    assert reloaded.solved_bench(1) == {"elements": []}
+    assert json.loads(path.read_text())["last_round"] == 5
+
+
+def test_a_version_one_save_still_loads():
+    old = {"version": 1, "rounds": {"3": {"stars": 2, "attempts": 4, "best_parts": 5}}}
+    progress = Progress.from_dict(old)
+    assert progress.record(3).stars == 2
+    assert progress.record(3).best_bench is None
+    assert progress.last_round is None
