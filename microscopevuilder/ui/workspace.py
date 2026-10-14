@@ -27,6 +27,13 @@ from ..rules.tolerances import (
     set_tolerance_policy,
     tolerance_policy,
 )
+from .render_jobs import (
+    RenderSettings,
+    card_ordinals,
+    plan_render,
+    plane_key,
+    render_planes,
+)
 from .ruler import IMPERIAL_STEPS_MM, METRIC_STEPS_MM, to_display
 from ..imaging.specimens import SPECIMEN_LIBRARY
 from ..imaging.synthesis import RenderSpec, render_build
@@ -44,18 +51,24 @@ SPECIMENS = SPECIMEN_LIBRARY
 
 
 class ImageWorker(QtCore.QThread):
-    """Off-thread synthesis of the image THIS bench forms.
+    """Off-thread synthesis of the images THIS bench forms.
 
-    Before M10 this took four loose scalars and rendered a generic picture. It now
-    renders through the resolved build: the objective's catalog aberrations at the
-    chosen field height and wavelength, defocus computed from where the image
-    actually lands, and photometry that makes a dim build noisy rather than merely
-    darker.
+    Renders one image per plane: the detector, plus one for every white card on the
+    bench. Rendering "at a card" needs no special case -- the card is passed as the
+    detector, so the defocus between it and the real image plane falls out of the
+    same resolver. A card sitting on the image plane comes out sharp; one a
+    centimetre away comes out blurred, by the same arithmetic the card's own
+    reading uses.
+
+    Progress is reported per plane, because with several cards this is seconds of
+    work rather than tenths.
     """
 
-    finished_image = QtCore.Signal(object)
+    plane_ready = QtCore.Signal(str, object)
+    progressed = QtCore.Signal(int, int, str)
+    finished_all = QtCore.Signal(object)
 
-    def __init__(self, bench, s_object: float, spec: RenderSpec, round_=None, parent=None):
+    def __init__(self, bench, s_object: float, spec: RenderSpec, planes, round_=None, parent=None):
         # Parented to the workspace so Qt owns the thread's lifetime. Destroying a
         # running QThread aborts the process, and a render outliving its window is
         # not hypothetical -- it is what happens when a player closes the workspace
@@ -64,12 +77,28 @@ class ImageWorker(QtCore.QThread):
         self.bench = bench
         self.s_object = s_object
         self.spec = spec
+        self.planes = list(planes)
         self.round = round_
 
     def run(self) -> None:
-        rendered = render_build(self.bench, self.s_object, self.spec)
+        import dataclasses
+
+        total = len(self.planes)
+        for index, plane in enumerate(self.planes, start=1):
+            if self.isInterruptionRequested():
+                return
+            self.progressed.emit(index - 1, total, plane.label)
+            spec = dataclasses.replace(self.spec, detector_name=plane.name)
+            try:
+                rendered = render_build(self.bench, self.s_object, spec)
+            except Exception as error:  # a plane that cannot be imaged is not fatal
+                self.plane_ready.emit(plane.name, error)
+            else:
+                self.plane_ready.emit(plane.name, rendered)
+        self.progressed.emit(total, total, "")
+
         measured = self.round.measure_image(self.bench) if self.round else None
-        self.finished_image.emit((rendered, measured))
+        self.finished_all.emit(measured)
 
 
 class CardPanel(QtWidgets.QWidget):
@@ -344,14 +373,15 @@ class MetricsPanel(QtWidgets.QWidget):
 
 
 class ScopeView(QtWidgets.QLabel):
-    """The generated image: what the build actually produces."""
+    """One image pane: what the build forms at one plane."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(256, 256)
+        self.setMinimumSize(200, 200)
         self.setAlignment(QtCore.Qt.AlignCenter)
         self.setText("press Run to image the specimen")
         self.setStyleSheet("background: #0b0d10; color: #7a828e;")
+        self.setScaledContents(False)
 
     def show_image(self, image: np.ndarray) -> None:
         arr = np.asarray(image, dtype=float)
@@ -361,6 +391,104 @@ class ScopeView(QtWidgets.QLabel):
         h, w = buf.shape
         qimage = QtGui.QImage(buf.data, w, h, w, QtGui.QImage.Format_Grayscale8).copy()
         self.setPixmap(QtGui.QPixmap.fromImage(qimage))
+
+    def show_problem(self, message: str) -> None:
+        self.setPixmap(QtGui.QPixmap())
+        self.setText(message)
+
+
+class ScopePanel(QtWidgets.QWidget):
+    """The image tab: the image plane, plus one pane per white card.
+
+    A card on the bench is a plane the player has chosen to look at, so it gets a
+    pane. Panes carry the same numbers the cards do in the bench view, so "Card 2"
+    means the same thing in both places without anyone counting.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QtWidgets.QVBoxLayout(self)
+
+        self.progress = QtWidgets.QProgressBar()
+        self.progress.setTextVisible(True)
+        self.progress.setFormat("%v of %m — %p%")
+        self.progress.setVisible(False)
+        layout.addWidget(self.progress)
+
+        self.caption = QtWidgets.QLabel("press Run to image the specimen")
+        self.caption.setStyleSheet("color: #9aa3b0;")
+        self.caption.setWordWrap(True)
+        layout.addWidget(self.caption)
+
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self._holder = QtWidgets.QWidget()
+        self.grid = QtWidgets.QGridLayout(self._holder)
+        self.grid.setSpacing(8)
+        scroll.setWidget(self._holder)
+        layout.addWidget(scroll, 1)
+
+        self.panes: dict[str, ScopeView] = {}
+        self._titles: dict[str, QtWidgets.QLabel] = {}
+
+    def set_planes(self, planes) -> None:
+        """Rebuild the pane grid, keeping any pane whose plane is still present."""
+        keep = {p.name for p in planes}
+        for name in list(self.panes):
+            if name not in keep:
+                self.grid.removeWidget(self.panes.pop(name))
+                self.panes_removed = True
+                self._titles.pop(name).deleteLater()
+        for name, view in self.panes.items():
+            self.grid.removeWidget(view)
+        for title in self._titles.values():
+            self.grid.removeWidget(title)
+
+        columns = 1 if len(planes) <= 1 else 2
+        for index, plane in enumerate(planes):
+            view = self.panes.get(plane.name)
+            if view is None:
+                view = ScopeView()
+                self.panes[plane.name] = view
+            title = self._titles.get(plane.name)
+            if title is None:
+                title = QtWidgets.QLabel()
+                title.setStyleSheet("font-weight: 600;")
+                self._titles[plane.name] = title
+            title.setText(f"{plane.label}   ·   s = {plane.s:.2f} mm")
+
+            row, column = divmod(index, columns)
+            self.grid.addWidget(title, row * 2, column)
+            self.grid.addWidget(view, row * 2 + 1, column)
+
+    def pane_title(self, name: str) -> str:
+        title = self._titles.get(name)
+        return title.text() if title is not None else ""
+
+    def show_image(self, name: str, rendered) -> None:
+        view = self.panes.get(name)
+        if view is None:
+            return
+        if isinstance(rendered, Exception):
+            view.show_problem(f"no image here:\n{rendered}")
+        else:
+            view.show_image(rendered.intensity)
+
+    def start_progress(self, total: int) -> None:
+        self.progress.setRange(0, max(total, 1))
+        self.progress.setValue(0)
+        self.progress.setVisible(True)
+
+    def set_progress(self, done: int, total: int, label: str) -> None:
+        self.progress.setRange(0, max(total, 1))
+        self.progress.setValue(done)
+        if label:
+            self.caption.setText(f"forming {label}…")
+
+    def end_progress(self, summary: str) -> None:
+        self.progress.setVisible(False)
+        self.caption.setText(summary)
 
 
 class Workspace(QtWidgets.QMainWindow):
@@ -374,6 +502,14 @@ class Workspace(QtWidgets.QMainWindow):
         self.worker: ImageWorker | None = None
         self.progress = Progress.load()
         self.last_measured = None
+        self._image_cache: dict = {}
+        self._last_optics: tuple | None = None
+        self._auto_timer = QtCore.QTimer(self)
+        self._auto_timer.setSingleShot(True)
+        # A drag emits a change per mouse move. Debouncing means auto-run reacts to
+        # where a component was put down, not to every pixel on the way there.
+        self._auto_timer.setInterval(350)
+        self._auto_timer.timeout.connect(self._auto_run)
 
         self.setWindowTitle(f"MicroscopeVuilder -- round {self.round.number}: {self.round.title}")
         self.scene = BenchScene(self)
@@ -383,7 +519,7 @@ class Workspace(QtWidgets.QMainWindow):
 
         self.inspector = InspectorPanel()
         self.report_panel = ReportPanel()
-        self.scope = ScopeView()
+        self.scope = ScopePanel()
         self.metrics_panel = MetricsPanel()
 
         self.card_panel = CardPanel()
@@ -393,6 +529,7 @@ class Workspace(QtWidgets.QMainWindow):
         right.addTab(self.card_panel, "white card")
         right.addTab(self.inspector, "inspector")
         right.addTab(self.scope, "image")
+        self.image_tab_index = right.indexOf(self.scope)
         right.addTab(self.metrics_panel, "measurements")
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
@@ -422,26 +559,37 @@ class Workspace(QtWidgets.QMainWindow):
 
         run = QtGui.QAction("Run", self)
         run.setShortcut("Ctrl+R")
-        run.triggered.connect(self.run_test)
+        # QAction.triggered carries a `checked` bool. Swallow it, or it lands in
+        # the slot's first parameter -- which is exactly the bug that put cards at
+        # s = 0 instead of their intended position.
+        run.triggered.connect(lambda _checked=False: self.run_test())
         bar.addAction(run)
+
+        self.auto_run = QtGui.QAction("Auto", self, checkable=True, checked=False)
+        self.auto_run.setToolTip(
+            "re-image whenever the build changes. Only what changed is recomputed: "
+            "moving a card re-renders that pane alone and leaves the ray trace be."
+        )
+        self.auto_run.toggled.connect(self._toggle_auto_run)
+        bar.addAction(self.auto_run)
 
         add_card = QtGui.QAction("Add card", self)
         add_card.setShortcut("Ctrl+K")
         add_card.setToolTip("drop a white card on the axis to see what lands there")
-        add_card.triggered.connect(self.add_card)
+        add_card.triggered.connect(lambda _checked=False: self.add_card())
         bar.addAction(add_card)
 
         clear_cards = QtGui.QAction("Clear cards", self)
-        clear_cards.triggered.connect(self.clear_cards)
+        clear_cards.triggered.connect(lambda _checked=False: self.clear_cards())
         bar.addAction(clear_cards)
 
         self.diff_action = QtGui.QAction("Compare with a working build", self)
         self.diff_action.setEnabled(False)
-        self.diff_action.triggered.connect(self.show_diff)
+        self.diff_action.triggered.connect(lambda _checked=False: self.show_diff())
         bar.addAction(self.diff_action)
 
         reset = QtGui.QAction("Reference build", self)
-        reset.triggered.connect(self.load_reference)
+        reset.triggered.connect(lambda _checked=False: self.load_reference())
         bar.addAction(reset)
 
         bar.addSeparator()
@@ -507,7 +655,7 @@ class Workspace(QtWidgets.QMainWindow):
         bar.addSeparator()
         help_action = QtGui.QAction("How this works", self)
         help_action.setShortcut("F1")
-        help_action.triggered.connect(self.show_help)
+        help_action.triggered.connect(lambda _checked=False: self.show_help())
         bar.addAction(help_action)
 
         bar.addSeparator()
@@ -553,6 +701,12 @@ class Workspace(QtWidgets.QMainWindow):
         self.wavelength.setValue(546.1)
         bar.addWidget(self.wavelength)
 
+        # The imaging settings are render inputs like any other: under auto-run a
+        # change to them should re-image, without touching the ray trace.
+        self.specimen.currentTextChanged.connect(lambda _text: self.request_auto_run())
+        for spin in (self.field_height, self.coherence, self.wavelength):
+            spin.valueChanged.connect(lambda _value: self.request_auto_run())
+
         self.statusBar().showMessage("drag a component along the axis to rebuild -- F1 for help")
 
     # --- live loop -----------------------------------------------------------
@@ -565,6 +719,7 @@ class Workspace(QtWidgets.QMainWindow):
         self._update_score(report)
         self.card_panel.show_reading(self.bench, self.round.s_object)
         self.scene.refresh()
+        self.request_auto_run()
         model = self.scene.model
         bits = []
         if model.image_s is not None:
@@ -633,8 +788,13 @@ class Workspace(QtWidgets.QMainWindow):
         self.refresh_live()
 
     def add_card(self, s: float | None = None) -> None:
-        """Drop a card midway along the bench, or at a given position."""
-        if s is None:
+        """Drop a card midway along the bench, or at a given position.
+
+        ``s`` is guarded against a bool as well as None: Qt's ``triggered(checked)``
+        used to arrive here as ``s = False``, which is not None and compares equal
+        to 0.0, so every card from the toolbar landed on the origin.
+        """
+        if s is None or isinstance(s, bool):
             s = self.bench.extent() * 0.5
         self.bench.add_card(s)
         self.scene.set_bench(self.bench, self.round.s_object)
@@ -653,24 +813,87 @@ class Workspace(QtWidgets.QMainWindow):
 
     # --- testing loop --------------------------------------------------------
 
-    def run_test(self) -> None:
-        """Synthesize the image this build actually produces, off the UI thread."""
-        if self.worker is not None and self.worker.isRunning():
-            return
-
-        self.statusBar().showMessage("imaging...")
-        spec = RenderSpec(
-            specimen=SPECIMENS[self.specimen.currentText()],
-            n=256,
-            field_height=self.field_height.value(),
+    def current_settings(self) -> RenderSettings:
+        return RenderSettings(
+            specimen=self.specimen.currentText(),
             wavelength_um=self.wavelength.value() / 1000.0,
-            coherence_parameter=self.coherence.value(),
-            detector_name=self._detector_name(),
-            exposure_photons=2000.0,
+            coherence=self.coherence.value(),
+            field_height=self.field_height.value(),
         )
-        self.worker = ImageWorker(self.bench, self.round.s_object, spec, self.round, self)
-        self.worker.finished_image.connect(self._on_image)
+
+    def run_test(self, force: bool = False) -> bool:
+        """Form the images this build makes, off the UI thread.
+
+        Renders only the panes whose inputs changed. Returns whether any work was
+        started, so auto-run can stay quiet when there is nothing to do.
+        """
+        if self.worker is not None and self.worker.isRunning():
+            return False
+
+        settings = self.current_settings()
+        cache = {} if force else self._image_cache
+        plan, optics = plan_render(
+            self.bench, self._detector_name(), settings, cache, self._last_optics
+        )
+        self._last_optics = optics
+        self._settings_key = settings.key()
+        self.scope.set_planes(plan.planes)
+
+        # Panes whose inputs did not change keep the image they already have.
+        for plane in plan.planes:
+            if plane not in plan.stale:
+                cached = cache.get(plane_key(optics, plane, settings))
+                if cached is not None:
+                    self.scope.show_image(plane.name, cached)
+
+        if not plan.stale:
+            self.scope.end_progress("up to date — nothing changed since the last run")
+            self.statusBar().showMessage("nothing to re-image: no input changed")
+            return False
+
+        self._pending = {"optics": optics, "settings": settings}
+        self.scope.start_progress(len(plan.stale))
+        self.statusBar().showMessage(
+            f"imaging {len(plan.stale)} plane(s)…" if len(plan.stale) > 1 else "imaging…"
+        )
+
+        spec = RenderSpec(
+            specimen=SPECIMENS[settings.specimen],
+            n=settings.samples,
+            field_height=settings.field_height,
+            wavelength_um=settings.wavelength_um,
+            coherence_parameter=settings.coherence,
+            detector_name=self._detector_name(),
+            exposure_photons=settings.exposure_photons,
+        )
+        self.worker = ImageWorker(
+            self.bench, self.round.s_object, spec, plan.stale, self.round, self
+        )
+        self.worker.plane_ready.connect(self._on_plane)
+        self.worker.progressed.connect(self.scope.set_progress)
+        self.worker.finished_all.connect(self._on_render_finished)
         self.worker.start()
+        return True
+
+    # --- auto-run ------------------------------------------------------------
+
+    def _toggle_auto_run(self, on: bool) -> None:
+        if on:
+            self._auto_timer.start()
+
+    def request_auto_run(self) -> None:
+        """Ask for a re-image soon, if auto-run is on. Debounced."""
+        if getattr(self, "auto_run", None) is not None and self.auto_run.isChecked():
+            self._auto_timer.start()
+
+    def _auto_run(self) -> None:
+        if not self.auto_run.isChecked():
+            return
+        if self.worker is not None and self.worker.isRunning():
+            # Come back once the current render is done rather than queueing.
+            self._auto_timer.start()
+            return
+        self.run_test()
 
     # --- zoom, ruler and snapping -------------------------------------------
 
@@ -793,13 +1016,41 @@ class Workspace(QtWidgets.QMainWindow):
                 return candidate
         return self.bench.elements[-1].name
 
-    def _on_image(self, result) -> None:
-        rendered, measured = result
+    def _on_plane(self, name: str, rendered) -> None:
+        """One pane finished. Cache it and show it."""
+        self.scope.show_image(name, rendered)
+        if isinstance(rendered, Exception):
+            return
+
+        pending = getattr(self, "_pending", None)
+        if pending is not None:
+            plane = next((p for p in self.scope_planes() if p.name == name), None)
+            if plane is not None:
+                key = plane_key(pending["optics"], plane, pending["settings"])
+                self._image_cache[key] = rendered
+
+        # The detector's image is the one the measurements describe.
+        if name == self._detector_name():
+            self._last_rendered = rendered
+            self.metrics_panel.show_measurements(rendered, self.last_measured)
+
+    def scope_planes(self):
+        return render_planes(self.bench, self._detector_name())
+
+    def _on_render_finished(self, measured) -> None:
         self.last_measured = measured
+        rendered = getattr(self, "_last_rendered", None)
+        if rendered is not None:
+            self.metrics_panel.show_measurements(rendered, measured)
         self.refresh_live()
-        self.scope.show_image(rendered.intensity)
-        self.metrics_panel.show_measurements(rendered, measured)
-        message = f"image formed at {rendered.optics.describe()}"
+
+        panes = len(self.scope.panes)
+        summary = f"{panes} plane(s) imaged" if panes != 1 else "image formed"
+        if rendered is not None:
+            summary += f" -- {rendered.optics.describe()}"
+        self.scope.end_progress(summary)
+
+        message = summary
         if measured is not None and measured.results:
             failures = len(measured.failures())
             message += (

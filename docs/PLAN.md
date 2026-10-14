@@ -197,7 +197,9 @@ number a student takes away is the one a bench would hold them to.
 | 15 | DIC | Wollaston shear, bias retardation | Relief image along the shear axis |
 
 Rounds 1–4 teach, 5–8 tighten tolerances, 9–12 restructure the bench, 13–15 are the
-contrast techniques. A sandbox unlocks alongside round 5 and grades nothing.
+contrast techniques. A sandbox unlocks alongside round 5 and grades nothing. How a player
+moves between them is specified in §7, *Progression* and is not yet built: today the
+workspace loads one round and cannot leave it.
 
 ---
 
@@ -271,6 +273,9 @@ loop, scoring and packaging are built and covered by the test suite.
 
 ### What remains
 
+- **Progression between rounds**, specified under *Progression* below. The largest gap:
+  every round is individually playable and gradeable, and there is no mechanism that
+  carries a player from one to the next.
 - **The catalog datasheet pass.** All 13 objective entries are `verified = false`: their
   specifications were written from secondary knowledge and have not been confirmed
   against Nikon's current datasheets. `--verify-catalog` prints the checklist, and the
@@ -282,6 +287,72 @@ loop, scoring and packaging are built and covered by the test suite.
   Open or "Run anyway". A cost decision, not a technical one.
 - **A 3D renderer**, deferred by decision 3 and kept possible by the 3D-native bench.
 
+### Progression — not yet built
+
+The rules that grade a round are built. The mechanism that carries a player *between*
+rounds is not, and the gap is wider than it looks: `PREREQUISITES` is a correct,
+tested unlock graph that only `--list` ever reads, and `ui/workspace.py` imports it
+without calling it. Four findings, measured rather than inferred:
+
+| Finding | Evidence |
+|---|---|
+| The workspace cannot change rounds | `self.round` is assigned in `__init__` and never reassigned. No picker, no next-round control. `--round N` is the only route, which a player of a one-file binary does not have, and `launch()` defaults to round **2** |
+| Every round opens already solved | `self.bench = self.round.reference_build()`, though `rounds.py` documents the reference as the solvability proof and diff source only |
+| So the game awards itself | `_update_score` runs inside `refresh_live`, which fires on load. Grading each reference build as it opens gives ★★★ on 14 of 15 rounds and ★★ on round 3 — then saves |
+| Measured rounds pass without rendering | `score_round` is called with `last_measured = None` until Run, and a missing report contributes no failures. Rounds 6, 7, 8, 13, 14 and 15 are gradeable on geometry alone, skipping resolution, sampling, flatness and chromatic focus |
+
+The last two share one root cause: **passing is computed as "no rule currently
+objects" rather than "every rule that applies has been satisfied."** Absence of
+evidence reads as success.
+
+#### The mechanism
+
+**The build carries forward.** Round *N* opens on the bench the player *solved* round
+*N−1* with, plus that round's new components present but unplaced. This is pillar 5
+made load-bearing — one instrument grows across fifteen rounds, and a build that
+passed while sloppy stays sloppy until its owner fixes it. It also gives the parts
+budget somewhere to bite, since you arrive carrying what you already spent.
+
+Four pieces:
+
+1. **`Round.starting_build()`**, separate from `reference_build()`. Default: the
+   previous round's saved solution, with new parts off-axis in a tray. Fallback, for a
+   round reached by a branch or with no saved predecessor: an authored unsolved bench
+   — the right parts in the wrong places. `reference_build()` goes back to proving
+   solvability and powering the diff, and the tests that assert each reference passes
+   stay as they are.
+2. **A solved bench per round in `Progress`.** `RoundRecord` grows a serialized bench
+   (the format `bench/serialize.py` already writes). Saved only on a genuine pass, so
+   what carries forward is a build that worked.
+3. **Passing becomes a claim that must be earned.** `Score` gains a `provisional`
+   state. A round with `has_measured_rules` cannot be scored above provisional until a
+   Run has completed against the *current* bench, keyed on the optics signature
+   `ui/render_jobs.py` computes — so editing the bench invalidates a stale pass.
+   `refresh_live` stops writing to `Progress` altogether; the scorecard shows
+   "geometry green — press Run to grade resolution and sampling".
+4. **An explicit completion moment, and a hub.** On a genuine pass, a non-modal banner
+   over the bench states the governing numbers and the stars earned, with **Next
+   round →**; that click is what commits to `Progress`. A solved round becomes
+   something the player did, not a state the app noticed. Alongside it, a dockable
+   list of 1–15 and the sandbox showing stars, best parts count, and lock state from
+   `is_unlocked(n, PREREQUISITES)`, a locked row naming what it waits on ("needs round
+   4: Köhler"). Clicking loads it through a new `load_round(n)`. This is also the first
+   time the branch structure — 9–10 off round 5, 13–15 off round 4 — is visible as a
+   choice rather than a straight line.
+
+#### Open questions for the build
+
+- **Frame mismatch on carry-forward.** Round 11 restructures the bench into an infinity
+  space; a carried finite-tube build does not simply extend. Each round needs to state
+  what it keeps, what it retires, and what it adds, rather than inheriting blindly —
+  and a "start from this round's clean bench" escape hatch regardless, or a player who
+  paints themselves into a corner is stuck.
+- **Replaying a solved round** must not be able to lower the carried build for the
+  rounds after it. `RoundRecord.merge` already keeps the best result; the saved bench
+  needs the same rule, or an explicit "adopt this build".
+- **`launch()` defaulting to round 2** is a bug either way. With a hub it should open
+  the hub, not a round.
+
 ### Risks
 
 | Risk | State |
@@ -292,3 +363,4 @@ loop, scoring and packaging are built and covered by the test suite.
 | Frozen-build portability | **Closed by building locally**, not by trusting CI: PyInstaller ≥ 6.22 for numpy 2.4, xcb libraries at build time, oldest supported Linux runner |
 | Unsigned binaries | **Open by choice**, stated in the release body and README |
 | 3D view | **Deferred by design**, not blocked |
+| Progression | **Open.** Fifteen graded rounds with no mechanism between them, and a scorer that reads silence as success. Specified under *Progression*; nothing about it is blocked on physics |

@@ -226,9 +226,11 @@ def test_scope_view_accepts_a_synthesized_image(workspace, app):
     rendered = RenderedImage(
         np.random.default_rng(0).random((64, 64)), 0.1, optics, []
     )
-    w._on_image((rendered, None))
-    assert w.scope.pixmap() is not None
-    assert w.scope.pixmap().width() == 64
+    w.scope.set_planes(w.scope_planes())
+    w._on_plane("screen", rendered)
+    pane = w.scope.panes["screen"]
+    assert pane.pixmap() is not None
+    assert pane.pixmap().width() == 64
     assert w.metrics_panel.table.topLevelItemCount() > 0
 
 
@@ -240,16 +242,22 @@ def test_image_worker_renders_the_actual_bench_off_thread(app):
     bench = rnd.reference_build()
     spec = RenderSpec(specimen=SPECIMENS["sine grating"], n=128, detector_name="sensor")
 
+    from microscopevuilder.ui.render_jobs import render_planes
+
     received = []
-    worker = ImageWorker(bench, rnd.s_object, spec)
-    worker.finished_image.connect(received.append)
+    done = []
+    planes = render_planes(bench, "sensor")
+    worker = ImageWorker(bench, rnd.s_object, spec, planes)
+    worker.plane_ready.connect(lambda name, r: received.append((name, r)))
+    worker.finished_all.connect(done.append)
     worker.start()
     assert worker.wait(60_000), "image synthesis timed out"
     app.processEvents()
 
     assert received
-    rendered, measured = received[0]
-    assert measured is None  # no round passed to the worker
+    assert done == [None]  # no round passed to the worker, so nothing measured
+    name, rendered = received[0]
+    assert name == "sensor"
     assert rendered.intensity.shape == (128, 128)
     assert rendered.intensity.min() >= 0.0
     # The point of M10: the render knows which objective it went through.
@@ -640,3 +648,136 @@ def test_the_grading_selector_switches_tolerance_policy(workspace, app):
     finally:
         w.tolerance_box.setCurrentIndex(0)
     assert tolerance_policy() is TolerancePolicy.FORGIVING
+
+
+# --- multi-pane imaging, auto-run and the toolbar signal path ----------------
+
+
+def test_toolbar_add_card_lands_midway_not_at_the_origin(workspace, app):
+    # QAction.triggered carries a `checked` bool. Connected naively it arrives as
+    # the slot's first argument, so every card from the toolbar used to be built
+    # at s = False == 0.0. Drive the ACTION, not the method, or the bug hides.
+    w = workspace(1)
+    action = next(a for a in w.findChildren(QtGui.QAction) if a.text() == "Add card")
+    action.trigger()
+
+    cards = w.bench.cards()
+    assert len(cards) == 1
+    assert cards[0].s == pytest.approx(w.bench.extent() * 0.5)
+    assert cards[0].s > 0.0
+
+
+def test_each_card_gets_its_own_numbered_pane(workspace, app):
+    w = workspace(1)
+    w.add_card(120.0)
+    w.add_card(60.0)
+
+    planes = w.scope_planes()
+    w.scope.set_planes(planes)
+
+    # The detector, plus one pane per card, numbered along the axis.
+    assert len(w.scope.panes) == 3
+    cards = [p for p in planes if p.is_card]
+    assert [p.ordinal for p in cards] == [1, 2]
+    assert [p.s for p in cards] == [60.0, 120.0]
+    labels = " ".join(w.scope.pane_title(p.name) for p in planes)
+    assert "Card 1" in labels and "Card 2" in labels
+
+
+def test_scene_numbers_cards_to_match_the_panes(workspace, app):
+    w = workspace(1)
+    w.add_card(120.0)
+    w.add_card(60.0)
+    ordinals = {
+        name: w.scene.card_ordinal(name) for name in (c.name for c in w.bench.cards())
+    }
+    by_s = {c.name: c.s for c in w.bench.cards()}
+    assert ordinals[min(by_s, key=by_s.get)] == 1
+    assert ordinals[max(by_s, key=by_s.get)] == 2
+
+
+def test_a_second_run_with_nothing_changed_does_no_work(workspace, app):
+    w = workspace(11)
+    assert w.run_test() is True
+    assert w.worker.wait(60_000)
+    app.processEvents()
+
+    # Everything is cached and nothing moved, so there is nothing to recompute.
+    assert w.run_test() is False
+    assert "nothing" in w.statusBar().currentMessage().lower()
+
+
+def test_moving_a_card_re_images_only_that_pane_and_skips_the_ray_trace(workspace, app):
+    from microscopevuilder.ui.render_jobs import plan_render
+
+    w = workspace(11)
+    w.add_card(120.0)
+    assert w.run_test() is True
+    assert w.worker.wait(60_000)
+    app.processEvents()
+
+    card = w.bench.cards()[0]
+    w.bench.move(card.name, 130.0)
+    plan, _ = plan_render(
+        w.bench, w._detector_name(), w.current_settings(), w._image_cache, w._last_optics
+    )
+    # The optics did not move, so the paraxial solution still stands.
+    assert plan.retrace is False
+    assert [p.name for p in plan.stale] == [card.name]
+
+
+def test_changing_the_specimen_invalidates_every_pane(workspace, app):
+    from microscopevuilder.ui.render_jobs import plan_render
+
+    w = workspace(11)
+    w.add_card(120.0)
+    assert w.run_test() is True
+    assert w.worker.wait(60_000)
+    app.processEvents()
+
+    w.specimen.setCurrentText("beads")
+    plan, _ = plan_render(
+        w.bench, w._detector_name(), w.current_settings(), w._image_cache, w._last_optics
+    )
+    assert set(plan.stale) == set(plan.planes)
+
+
+def test_auto_run_is_off_until_asked_and_then_fires_on_a_change(workspace, app):
+    w = workspace(1)
+    assert w.auto_run.isChecked() is False
+
+    # Off: a change must not queue any work.
+    w.request_auto_run()
+    assert w._auto_timer.isActive() is False
+
+    w.auto_run.setChecked(True)
+    w.refresh_live()
+    assert w._auto_timer.isActive(), "a bench change should queue an auto re-image"
+
+
+def test_the_progress_bar_appears_only_while_imaging(workspace, app):
+    w = workspace(1)
+    assert w.scope.progress.isVisibleTo(w.scope) is False
+    w.scope.start_progress(3)
+    assert w.scope.progress.isVisibleTo(w.scope) is True
+    assert w.scope.progress.maximum() == 3
+    w.scope.set_progress(2, 3, "card 1")
+    assert w.scope.progress.value() == 2
+    w.scope.end_progress("done")
+    assert w.scope.progress.isVisibleTo(w.scope) is False
+
+
+def test_a_pane_that_fails_to_render_says_so_instead_of_going_blank(workspace, app):
+    w = workspace(1)
+    w.scope.set_planes(w.scope_planes())
+    name = w._detector_name()
+    w._on_plane(name, RuntimeError("no image plane here"))
+    assert "no image plane here" in w.scope.panes[name].text()
+
+
+def test_changing_an_imaging_setting_queues_an_auto_re_image(workspace, app):
+    w = workspace(1)
+    w.auto_run.setChecked(True)
+    w._auto_timer.stop()
+    w.specimen.setCurrentText("beads")
+    assert w._auto_timer.isActive()
