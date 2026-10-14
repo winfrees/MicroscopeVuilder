@@ -189,3 +189,26 @@ def test_every_flag_the_readme_documents_exists():
                  "--strict", "--no-measure"):
         assert flag in readme, f"{flag} is no longer documented"
         assert flag in result.stdout, f"{flag} is documented but does not exist"
+
+
+def test_pyside_is_not_a_release_that_aborts_on_setpen():
+    """Guard the PySide6 exclusion, so a bump cannot silently re-break CI.
+
+    PySide6 6.12.0 over-decrefs None inside QGraphicsLineItem.setPen. The ruler
+    calls it once per tick per redraw, so a few hundred zoom steps drive None's
+    refcount to zero and the process dies with
+
+        Fatal Python error: none_dealloc: deallocating None
+
+    which is an abort, not a test failure -- it takes the whole run with it and
+    reports only exit code 134. Reproducible in twelve lines with no project code,
+    so the pin is the fix. If this fails, a newer PySide6 is installed than the
+    pin in pyproject.toml allows: verify the bug is actually fixed before widening
+    it, by zooming the workspace a few hundred times under the new version.
+    """
+    pyside6 = pytest.importorskip("PySide6")
+    broken = {"6.12.0"}
+    assert pyside6.__version__ not in broken, (
+        f"PySide6 {pyside6.__version__} is excluded in pyproject.toml because "
+        "QGraphicsLineItem.setPen aborts the interpreter"
+    )

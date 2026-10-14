@@ -502,6 +502,7 @@ class Workspace(QtWidgets.QMainWindow):
         self.worker: ImageWorker | None = None
         self.progress = Progress.load()
         self.last_measured = None
+        self._closing = False
         self._image_cache: dict = {}
         self._last_optics: tuple | None = None
         self._auto_timer = QtCore.QTimer(self)
@@ -883,11 +884,13 @@ class Workspace(QtWidgets.QMainWindow):
 
     def request_auto_run(self) -> None:
         """Ask for a re-image soon, if auto-run is on. Debounced."""
+        if getattr(self, "_closing", False):
+            return
         if getattr(self, "auto_run", None) is not None and self.auto_run.isChecked():
             self._auto_timer.start()
 
     def _auto_run(self) -> None:
-        if not self.auto_run.isChecked():
+        if self._closing or not self.auto_run.isChecked():
             return
         if self.worker is not None and self.worker.isRunning():
             # Come back once the current render is done rather than queueing.
@@ -1005,6 +1008,11 @@ class Workspace(QtWidgets.QMainWindow):
         finishes, emits into a deleted receiver, and takes the process with it.
         Closing the workspace mid-render is an ordinary thing for a player to do.
         """
+        # Disarm auto-run first. A debounce still pending when the window goes
+        # away would otherwise fire into a half-torn-down workspace and start a
+        # fresh render against it.
+        self._closing = True
+        self._auto_timer.stop()
         if self.worker is not None and self.worker.isRunning():
             self.worker.requestInterruption()
             self.worker.wait(5_000)

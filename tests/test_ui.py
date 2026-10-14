@@ -781,3 +781,17 @@ def test_changing_an_imaging_setting_queues_an_auto_re_image(workspace, app):
     w._auto_timer.stop()
     w.specimen.setCurrentText("beads")
     assert w._auto_timer.isActive()
+
+
+def test_closing_the_window_disarms_a_pending_auto_run(workspace, app):
+    # A debounce left armed past close would fire into a half-torn-down window
+    # and start a render against it.
+    w = workspace(1)
+    w.auto_run.setChecked(True)
+    w.refresh_live()
+    assert w._auto_timer.isActive()
+
+    w.close()
+    assert w._auto_timer.isActive() is False
+    w.request_auto_run()
+    assert w._auto_timer.isActive() is False, "a closed workspace must not re-arm"
