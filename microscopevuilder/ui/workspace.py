@@ -159,6 +159,9 @@ class CardPanel(QtWidgets.QWidget):
         for kind, label in (("image", "image (field)"), ("pupil", "pupil (aperture)")):
             for s in found[kind]:
                 self.planes.addTopLevelItem(QtWidgets.QTreeWidgetItem([label, f"{s:.2f}"]))
+        # "pupil (aperture stop)" is wider than the default column, and a plane
+        # name truncated to "pupil (aper..." is no use to anyone reading it.
+        self.planes.resizeColumnToContents(0)
 
 
 class InspectorPanel(QtWidgets.QWidget):
@@ -543,8 +546,13 @@ class RoundsPanel(QtWidgets.QWidget):
                 item.setForeground(0, QtGui.QColor("#6b7280"))
                 item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEnabled)
             elif number == current:
+                # Bold, not a colour. A hardcoded light foreground was invisible
+                # against the default light palette -- the current round, the one
+                # row that most needs to stand out, was the hardest to read.
+                font = item.font(0)
+                font.setBold(True)
                 for column in range(3):
-                    item.setForeground(column, QtGui.QColor("#f2f2f2"))
+                    item.setFont(column, font)
             self.tree.addTopLevelItem(item)
         self.tree.resizeColumnToContents(0)
 

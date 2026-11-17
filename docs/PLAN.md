@@ -197,7 +197,7 @@ number a student takes away is the one a bench would hold them to.
 | 15 | DIC | Wollaston shear, bias retardation | Relief image along the shear axis |
 
 Rounds 1–4 teach, 5–8 tighten tolerances, 9–12 restructure the bench, 13–15 are the
-contrast techniques. A sandbox unlocks alongside round 5 and grades nothing. How a player
+contrast techniques. A sandbox is always available, with no prerequisite, and grades nothing. How a player
 moves between them is described in §7, *Progression*.
 
 ---

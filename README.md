@@ -9,7 +9,9 @@ Aimed at graduate students in the biomedical sciences: rigor over abstraction, r
 manufacturer conventions, and the governing equation shown with your numbers in it.
 
 Fifteen rounds, from a single-lens loupe to phase contrast and DIC, plus a sandbox.
-See [`docs/PLAN.md`](docs/PLAN.md) for the design.
+
+[**User manual**](docs/MANUAL.md) — how to play, with screenshots.
+[`docs/PLAN.md`](docs/PLAN.md) — the design and the physics behind it.
 
 ## Download
 
