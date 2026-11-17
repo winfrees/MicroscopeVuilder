@@ -324,3 +324,62 @@ card, or use the white card's plane list to find where the planes actually are.
 **The catalogue numbers do not match my objective.** They are pedagogical, written
 from secondary knowledge and not checked against datasheets; the amber strip says
 so. `--verify-catalog` prints the checklist of what would need confirming.
+
+---
+
+## 11. If your antivirus flags the download
+
+This is expected, and it is worth understanding rather than just clicking through.
+
+**Why it happens.** A one-file PyInstaller executable carries a compressed archive
+of Python, Qt and the program, and unpacks it to a temporary directory at startup.
+That is structurally what a self-extracting packer does, and packers are what
+malware uses to hide its payload. Heuristic and machine-learning engines score on
+that shape, so unsigned one-file Python builds get flagged routinely — typically
+under a generic, ML-suffixed name such as `Trojan:Win32/Wacatac.B!ml` or
+`Program:Win32/Wacapew.C!ml`, rather than a specific family. Three things make it
+more likely here: the binary is **unsigned**, each build is a **brand-new file**
+almost nobody has downloaded, and reputation systems treat unknown files as
+suspect by default.
+
+**What you can check, in increasing order of strength.**
+
+1. **Verify the download.** Each release publishes `SHA256SUMS`. If your copy
+   matches, the file is what the build produced and was not altered in transit:
+
+   ```sh
+   sha256sum -c SHA256SUMS --ignore-missing      # Linux
+   shasum -a 256 -c SHA256SUMS --ignore-missing  # macOS
+   ```
+   ```powershell
+   Get-FileHash .\MicroscopeVuilder-windows-x86_64.exe -Algorithm SHA256
+   ```
+
+2. **Read the build.** Releases are built by GitHub Actions from this repository,
+   and the run is public: the log shows the commit, the dependency set and every
+   command. Nothing is downloaded at build time except packages from PyPI.
+
+3. **Get a second opinion.** Upload the file to
+   [VirusTotal](https://www.virustotal.com/), which runs it past some seventy
+   engines. The expected result for a build like this is a handful of heuristic
+   detections against a large majority of clean verdicts, with no agreement on a
+   family. A specific, named, widely-agreed detection would be a different matter
+   — if you see that, please open an issue and do not run the file.
+
+4. **Skip the binary entirely.** Running from source involves no frozen executable
+   and nothing to flag:
+
+   ```sh
+   pip install -e ".[ui]"
+   python -m microscopevuilder --ui
+   ```
+
+**What would actually fix it:** code-signing the Windows and macOS builds with a
+certificate, plus notarization on macOS. That is a cost decision rather than a
+technical one — an EV certificate is the thing that buys SmartScreen reputation —
+and it is recorded as an open item in `docs/PLAN.md`.
+
+**Reporting the false positive** helps everyone downloading it after you. Microsoft
+take submissions at
+<https://www.microsoft.com/en-us/wdsi/filesubmission>; most vendors have an
+equivalent form.

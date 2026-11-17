@@ -26,6 +26,12 @@ On macOS and Linux, `chmod +x MicroscopeVuilder-*` first. The macOS and Windows 
 are not code-signed, so the first launch needs Right-click → Open (macOS) or
 "More info" → "Run anyway" (Windows SmartScreen).
 
+**If your antivirus flags the download**, see
+[the manual](docs/MANUAL.md#11-if-your-antivirus-flags-the-download). A one-file
+PyInstaller binary unpacks itself at startup, which is also what a packer does, so
+heuristic scanners flag it on sight. Every release publishes `SHA256SUMS` so a
+download can be verified against what the build produced.
+
 ## Running it
 
 ```sh

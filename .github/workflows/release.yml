@@ -161,6 +161,19 @@ jobs:
       - name: List what will be published
         run: ls -lh artifacts
 
+      - name: Checksum every asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Published alongside the binaries so a download can be verified against
+          # what this run actually built. A one-file PyInstaller binary is
+          # routinely flagged by heuristic antivirus -- the self-extracting
+          # bootloader looks like a packer -- and a checksum is how someone tells
+          # a false positive from a file that was tampered with in transit.
+          cd artifacts
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.kind.outputs.tag }}
@@ -187,6 +200,20 @@ jobs:
             The macOS and Windows builds are **not code-signed**, so the first
             launch needs Right-click -> Open (macOS) or "More info" -> "Run anyway"
             (Windows SmartScreen).
+
+            **If your antivirus flags the download**, see
+            [docs/MANUAL.md](docs/MANUAL.md#11-if-your-antivirus-flags-the-download).
+            A one-file PyInstaller binary unpacks itself at startup, which is also
+            what a packer does, so heuristic scanners flag it on sight. Verify the
+            download against `SHA256SUMS`, published with these files:
+
+            ```
+            sha256sum -c SHA256SUMS --ignore-missing      # Linux
+            shasum -a 256 -c SHA256SUMS --ignore-missing  # macOS
+            ```
+            ```powershell
+            Get-FileHash .\MicroscopeVuilder-windows-x86_64.exe -Algorithm SHA256
+            ```
 
             Every build runs the full test suite and then exercises real rounds
             against the frozen binary before it is published.
